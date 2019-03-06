@@ -1,120 +1,12 @@
-library(devtools)
 devtools::install_git('https://gitlab.com/b-rowlingson/maxrectangle')
 
-ctx = initjs() 
-
-th = seq(0,2*pi,len=11)[-11]
-r = runif(10)
-xy = cbind(r*cos(th), r*sin(th))
-xy = rbind(xy, xy[1,])
-plot(xy, type="l") 
-
-lr = find_lr(ctx, xy) 
-
-
-library(js)
-library(V8)
+library(maxrectangle)
 library(readr)
-# 
-# demo <- readLines("largestRect.coffee")
-# js <- coffee_compile(demo)
-# js_validate_script(js)
-# js <- readLines("largestRect.js")
-# 
-# ct <- v8()
-# ct$source("https://requirejs.org/docs/release/2.3.6/minified/require.js")
-# ct$source("https://raw.githubusercontent.com/mourner/simplify-js/master/simplify.js")
-# ct$source(system.file("simplify.js", package="V8"))
-# 
-# ct$eval(js)
-# ct$console()
+library(MASS)
 
-##' Init a JS context
-##'
-##' Init a JS context
+setwd("~/GitHub/maxrect")
 
-initjs <- function(){
-  ### initialise a v8 context and load d3, simplify, and the largest rectangle
-  ### scripts
-  ct = v8()
-  ct$eval("window={}")
-  ct$source("http://d3js.org/d3.v3.min.js")
-  ct$source("https://requirejs.org/docs/release/2.3.6/minified/require.js")
-  ct$source("http://d3plus.org/assets/posts/largestRect/lib/simplify.js")
-  
-  # ct$source("https://raw.githubusercontent.com/angular/angular.js/master/src/minErr.js")
-  # ct$source("https://raw.githubusercontent.com/angular/angular.js/master/src/Angular.js")
-  ct$source("bundle.js")
-  
-  # ct$source("https://raw.githubusercontent.com/mourner/simplify-js/master/simplify.js")
-  
-  ### simplify loads into the window context but the largestRect needs it in main:
-  ct$eval("simplify = window.simplify")
-  
-  
-  ### transpile to JS and evaluate
-  # lr = coffee_compile(readLines("largestRect.coffee"))
-  lr = readLines("largestRect.js")
-  ct$eval(lr)
-  
-  ### return the context
-  ct
-}
-##' Return the largest fitting rectangle
-##'
-##' Return the largest fitting rectangle
-##' @title Largest Fitting Rectangle
-##' @param ct a V8 context
-##' @param xy a two-column matrix
-##' @param options list of options
-##' @return rectangle structure
-##' @author Barry Rowlingson
-##' @examples
-##' \dontrun {
-##' ctx = initjs()
-##' th = seq(0,2*pi,len=11)[-11]
-##' r = runif(10)
-##' xy = cbind(r*cos(th), r*sin(th))
-##' xy = rbind(xy, xy[1,])
-##' plot(xy, type="l",asp=1)
-##' lr = find_lr(ctx, xy)
-##' pp = plotrect(lr[[1]])
-##' lines(pp)
-##' }
-##' @export
-##' 
-find_lr <- function(ct, xy, options){
-  ## xy MUST be a two-column matrix. This transfers it as
-  ## an Array of Arrays:
-  ct$assign("xy",xy)
-  ## call the largest rectangle routine and return the result
-  ## TODO: pass options here
-  lrect = ct$get("window.largestRect(xy)")
-  lrect
-}
-##' Rotation matrix
-##'
-##' Rotation Matrix
-##' @title Rotation Matrix
-##' @param ang rotation angle
-##' @return a 2d rotation matrix
-##' @author Barry Rowlingson
-##' @export
-rmat <- function(ang){
-  ## rotation matrix
-  ang = ang*pi/180
-  sa = sin(ang)
-  ca = cos(ang)
-  rbind(c(ca,-sa),c(sa,ca))
-}
-
-##' Convert rectangle structure to coordinates for plotting
-##'
-##' Convert rectangle structure to coordinates for plotting
-##' @title .. content for \details{} ..
-##' @param lr1 a rectangle structure
-##' @return a two-column matrix
-##' @author Barry Rowlingson
+#maxrectangle package doesn't work for plotrect, so calling function directly
 plotrect <- function(lr1){
   ## convert rectangle output to coordinates
   
@@ -136,15 +28,42 @@ plotrect <- function(lr1){
   rbind(xy,xy[1,])
 }
 
-###
-### example
-###
+ctx = initjs()
 
-# ct = initjs()
-# # then repeat:
-#   xy = rbind(c(0,0),c(1,0),c(0.5,1),c(0,0))
-#   lr = find_lr(ct, xy)
-#   pp = plotrect(lr[[1]])
-#   plot(xy, type="l",asp=1)
-#   lines(pp)
-# # (the context `ct` can be reused)
+#create test polygon
+th = seq(0,2*pi,len=11)[-11]
+r = runif(10)
+xy = cbind(r*cos(th), r*sin(th))
+xy = rbind(xy, xy[1,])
+
+#this is plotting of two separate polygons
+x_inner <- c(6088887.5778603116,6088924.7236851258,6088925.4778041998,6088888.3320386177,6088887.5778603116)
+y_inner <- c(1994253.6826348184,1994253.0360036378,1994296.3581886755,1994297.0048188232,1994253.6826348184)
+xy_inner <- cbind(x_inner,y_inner)
+
+x_outer <- c(6088969.3339999998,6088969.5630000085,6088869.5660000127,6088869.3009999944,6088969.2960000103,6088969.3339999998)
+y_outer <- c(1994294.6689999939,1994249.6080000065,1994248.8560000029,1994300.7799999823,1994302.0189999985,1994294.6689999939)
+xy_outer <- cbind(x_outer,y_outer)
+
+# xy_outer <- read_delim("xy_outer.txt", delim = ",")
+
+eqscplot(xy_outer, type= "l")
+lines(xy_inner, type= "l")
+
+#this is plotting a merged polygon 
+# xy_merge <- read_delim("xy_merge.txt", delim = ",")
+x_merge <- c(6088888.3320386177,6088887.5778603116,6088924.7236851258,6088925.4778041998,6088888.3320386177,
+             6088869.3009999944,6088969.2960000103,6088969.3339999998,6088969.5630000085,6088869.5660000127,6088869.3009999944,
+             6088888.3320386177)
+y_merge <- c(1994297.0048188232,1994253.6826348184,1994253.0360036378,1994296.3581886755,1994297.0048188232,
+             1994300.7799999823,1994302.0189999985,1994294.6689999939,1994249.6080000065,1994248.8560000029,1994300.7799999823,
+             1994297.0048188232)
+xy_merge <- cbind(x_merge,y_merge)
+eqscplot(xy_merge, type= "l")
+
+# find largest rect
+lr = find_lr(ctx, xy_merge)
+
+#plot largest rect, not working
+pp = plotrect(lr[[1]])
+lines(pp)
