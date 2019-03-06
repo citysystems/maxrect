@@ -49,7 +49,7 @@
   # angle - rotation angle in degrees. The anchor of rotation is the center point
 
 # print    = require "../core/console/print.coffee"
-simplify = require "simplify-js"
+#simplify = require "simplify-js"
 
 module.exports = (poly, options) ->
   if poly.length < 3
@@ -101,14 +101,7 @@ module.exports = (poly, options) ->
   [minx, maxx] = d3.extent poly, (d) -> d[0]
   [miny, maxy] = d3.extent poly, (d) -> d[1]
 
-  # simplify polygon
-  tolerance = Math.min(maxx - minx, maxy - miny) * options.tolerance
-  tempPoly = ({x:p[0], y:p[1]} for p in poly)
 
-  if tolerance > 0
-    tempPoly = simplify tempPoly, tolerance
-    poly = ([p.x, p.y] for p in tempPoly)
-  if options.vdebug then events.push type: 'simplify', poly: poly
 
   # get the width of the bounding box of the simplified polygon
   [minx, maxx] = d3.extent poly, (d) -> d[0]
