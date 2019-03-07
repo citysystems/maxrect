@@ -1,20 +1,9 @@
-//require(['require','simplify-js'], function (require) {
-//    var simplify = require('simplify-js');
-  
 (function() {
-  
-  require(['require','simplify-js'], function (require) {
-    var simplify = require('simplify-js');
-  });
-  
-  //require('angular');
-  
-  var intersectPoints, lineIntersection, pointInPoly, pointInSegmentBox, polyInsidePoly, rayIntersectsSegment, rotatePoint, rotatePoly, segmentsIntersect, squaredDist;
+  var intersectPoints, lineIntersection, pointInPoly, pointInSegmentBox, polyInsidePoly, rayIntersectsSegment, rotatePoint, rotatePoly, segmentsIntersect, simplify, squaredDist;
 
-//  simplify = require('simplify-js');
+  simplify = require("simplify-js");
 
-  module.exports = require(['require','angular'], function(require, poly, options) {
-    require('angular');
+  module.exports = function(poly, options) {
     var aRatio, aRatios, angle, angleRad, angleStep, angles, area, aspectRatioStep, aspectRatios, bBox, boxHeight, boxWidth, centroid, events, height, i, insidePoly, j, k, l, left, len, len1, len2, len3, m, maxArea, maxAspectRatio, maxHeight, maxRect, maxWidth, maxx, maxy, minAspectRatio, minSqDistH, minSqDistW, minx, miny, modifOrigins, origOrigin, origin, origins, p, p1H, p1W, p2H, p2W, rectPoly, ref, ref1, ref2, ref3, ref4, ref5, ref6, ref7, ref8, right, rndPoint, rndX, rndY, tempPoly, tolerance, width, widthStep, x0, y0;
     if (poly.length < 3) {
       return null;
@@ -259,7 +248,7 @@
       }
     }
     return [maxRect, maxArea, events];
-  });
+  };
 
   squaredDist = function(a, b) {
     var deltax, deltay;

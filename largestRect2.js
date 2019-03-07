@@ -1,20 +1,25 @@
-//require(['require','simplify-js'], function (require) {
-//    var simplify = require('simplify-js');
-  
-(function() {
-  
-  require(['require','simplify-js'], function (require) {
+define(function (require) {
     var simplify = require('simplify-js');
-  });
-  
-  //require('angular');
-  
-  var intersectPoints, lineIntersection, pointInPoly, pointInSegmentBox, polyInsidePoly, rayIntersectsSegment, rotatePoint, rotatePoly, segmentsIntersect, squaredDist;
+});
 
-//  simplify = require('simplify-js');
+var intersectPoints, lineIntersection, pointInPoly, pointInSegmentBox, polyInsidePoly, rayIntersectsSegment, rotatePoint, rotatePoly, segmentsIntersect, squaredDist;
 
-  module.exports = require(['require','angular'], function(require, poly, options) {
-    require('angular');
+  //simplify = require("simplify-js");
+  
+var poly = [];
+var poly1 = ['0','0'];
+var poly2 = ['0','2'];
+var poly3 = ['2','2'];
+var poly4 = ['0','2'];
+var poly5 = ['0','0'];
+
+poly.push(poly1);
+poly.push(poly2);
+poly.push(poly3);
+poly.push(poly4);
+poly.push(poly5);
+
+  module.exports = function(poly, options) {
     var aRatio, aRatios, angle, angleRad, angleStep, angles, area, aspectRatioStep, aspectRatios, bBox, boxHeight, boxWidth, centroid, events, height, i, insidePoly, j, k, l, left, len, len1, len2, len3, m, maxArea, maxAspectRatio, maxHeight, maxRect, maxWidth, maxx, maxy, minAspectRatio, minSqDistH, minSqDistW, minx, miny, modifOrigins, origOrigin, origin, origins, p, p1H, p1W, p2H, p2W, rectPoly, ref, ref1, ref2, ref3, ref4, ref5, ref6, ref7, ref8, right, rndPoint, rndX, rndY, tempPoly, tolerance, width, widthStep, x0, y0;
     if (poly.length < 3) {
       return null;
@@ -22,25 +27,25 @@
     events = [];
     aspectRatioStep = 0.5;
     angleStep = 5;
-    if (options == null) {
+    if (options === null) {
       options = {};
     }
-    if (options.maxAspectRatio == null) {
+    if (options.maxAspectRatio === null) {
       options.maxAspectRatio = 15;
     }
-    if (options.minWidth == null) {
+    if (options.minWidth === null) {
       options.minWidth = 0;
     }
-    if (options.minHeight == null) {
+    if (options.minHeight === null) {
       options.minHeight = 0;
     }
-    if (options.tolerance == null) {
+    if (options.tolerance === null) {
       options.tolerance = 0.02;
     }
-    if (options.nTries == null) {
+    if (options.nTries === null) {
       options.nTries = 20;
     }
-    if (options.angle != null) {
+    if (options.angle !== null) {
       if (options.angle instanceof Array) {
         angles = options.angle;
       } else if (typeof options.angle === 'number') {
@@ -49,10 +54,10 @@
         angles = [Number(options.angle)];
       }
     }
-    if (angles == null) {
+    if (angles === null) {
       angles = d3.range(-90, 90 + angleStep, angleStep);
     }
-    if (options.aspectRatio != null) {
+    if (options.aspectRatio !== null) {
       if (options.aspectRatio instanceof Array) {
         aspectRatios = options.aspectRatio;
       } else if (typeof options.aspectRatio === 'number') {
@@ -61,7 +66,7 @@
         aspectRatios = [Number(options.aspectRatio)];
       }
     }
-    if (options.origin != null) {
+    if (options.origin !== null) {
       if (options.origin instanceof Array) {
         if (options.origin[0] instanceof Array) {
           origins = options.origin;
@@ -120,7 +125,7 @@
     bBox = [[minx, miny], [maxx, miny], [maxx, maxy], [minx, maxy]];
     ref4 = [maxx - minx, maxy - miny], boxWidth = ref4[0], boxHeight = ref4[1];
     widthStep = Math.min(boxWidth, boxHeight) / 50;
-    if (origins == null) {
+    if (origins === null) {
       origins = [];
       centroid = d3.geom.polygon(poly).centroid();
       if (pointInPoly(centroid, poly)) {
@@ -157,10 +162,10 @@
         ref5 = intersectPoints(poly, origOrigin, angleRad), p1W = ref5[0], p2W = ref5[1];
         ref6 = intersectPoints(poly, origOrigin, angleRad + Math.PI / 2), p1H = ref6[0], p2H = ref6[1];
         modifOrigins = [];
-        if ((p1W != null) && (p2W != null)) {
+        if ((p1W !== null) && (p2W !== null)) {
           modifOrigins.push([(p1W[0] + p2W[0]) / 2, (p1W[1] + p2W[1]) / 2]);
         }
-        if ((p1H != null) && (p2H != null)) {
+        if ((p1H !== null) && (p2H !== null)) {
           modifOrigins.push([(p1H[0] + p2H[0]) / 2, (p1H[1] + p2H[1]) / 2]);
         }
         if (options.vdebug) {
@@ -198,7 +203,7 @@
           if (maxWidth * maxHeight < maxArea) {
             continue;
           }
-          if (aspectRatios != null) {
+          if (aspectRatios !== null) {
             aRatios = aspectRatios;
           } else {
             minAspectRatio = Math.max(1, options.minWidth / maxHeight, maxArea / (maxHeight * maxHeight));
@@ -259,7 +264,7 @@
       }
     }
     return [maxRect, maxArea, events];
-  });
+  };
 
   squaredDist = function(a, b) {
     var deltax, deltay;
@@ -334,7 +339,7 @@
   segmentsIntersect = function(p1, q1, p2, q2) {
     var p;
     p = lineIntersection(p1, q1, p2, q2);
-    if (p == null) {
+    if (p === null) {
       return false;
     }
     return pointInSegmentBox(p, p1, q1) && pointInSegmentBox(p, p2, q2);
@@ -422,6 +427,4 @@
     }
     return [closestPointLeft, closestPointRight];
   };
-
-}).call(this);
 
