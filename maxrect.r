@@ -47,8 +47,45 @@ xy_outer <- cbind(x_outer,y_outer)
 
 # xy_outer <- read_delim("xy_outer.txt", delim = ",")
 
+# plot the inner and outer ring
 eqscplot(xy_outer, type= "l")
 lines(xy_inner, type= "l")
+
+
+#simple coordinates
+x_outer2 <- c(0,0,10,10,0)
+y_outer2 <- c(0,5,5,0,0)
+xy_outer2 <- cbind(x_outer2,y_outer2)
+
+x_inner2 <- c(1,1,3,3,1)
+y_inner2 <- c(1,3,3,1,1)
+xy_inner2 <- cbind(x_inner2,y_inner2)
+
+# plot the inner and outer ring
+eqscplot(xy_outer2, type= "l")
+lines(xy_inner2, type= "l")
+
+#Outer: clockwise, inner: counter-clockwise (kind of works?)
+x_merge2_cwccw <- c(0,10,10,0,0,1,1,3,3,1,0)
+y_merge2_cwccw <- c(5,5,0,0,5,3,1,1,3,3,5)
+#Outer: clockwise, inner: clock-wise (kind of works?)
+x_merge2_cwcw <- c(0,10,10,0,0,1,3,3,1,1,0)
+y_merge2_cwcw <- c(5,5,0,0,5,3,3,1,1,3,5)
+
+xy_merge2_cwccw <- cbind(x_merge2_cwccw,y_merge2_cwccw)
+xy_merge2_cwcw <- cbind(x_merge2_cwcw,y_merge2_cwcw)
+lr_cwccw = find_lr(ctx, xy_merge2_cwccw)
+lr_cwcw = find_lr(ctx, xy_merge2_cwcw)
+eqscplot(xy_merge2_cwccw, type= "l")
+pp = plotrect(lr_cwccw[[1]])
+lines(pp)
+# plot the inner and outer ring
+eqscplot(xy_inner2, type= "l")
+lines(xy_inner, type= "l")
+
+
+####### 
+
 
 #this is plotting a merged polygon 
 # xy_merge <- read_delim("xy_merge.txt", delim = ",")
