@@ -17,7 +17,7 @@ initjs <- function(){
   ct$eval("simplify = window.simplify")
   
   ### transpile to JS and evaluate
-  lr = coffee_compile(readLines("largestRect.coffee"))
+  lr = coffee_compile(readLines(system.file("largestRect.coffee", package = "maxrectangle")))
   ct$eval(lr)
   
   ### return the context
