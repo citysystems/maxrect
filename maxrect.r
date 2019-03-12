@@ -1,4 +1,4 @@
-devtools::install_git('https://gitlab.com/b-rowlingson/maxrectangle')
+# devtools::install_git('https://gitlab.com/b-rowlingson/maxrectangle')
 
 library(maxrectangle)
 library(readr)

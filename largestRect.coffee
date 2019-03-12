@@ -47,33 +47,27 @@
   # cx - the x coordinate of the rectangle's center
   # cy - the y coordinate of the rectangle's center
   # angle - rotation angle in degrees. The anchor of rotation is the center point
-
-# print    = require "../core/console/print.coffee"
-# simplify = require "simplify"
-
-module.exports = (poly, options) ->
-  if poly.length < 3
-    # print.error 'polygon has to have at least 3 points'
-    return null
+window.largestRect = (poly, options) ->
   ## For visualization debugging purposes ##
   events = []
 
   ########## Algorithm constants ##########
   # step size for the aspect ratio
-  aspectRatioStep = 0.5
+  aspectRatioStep = 0.1 #0.5 original
   # step size for angles (in degrees); has linear impact on running time
-  angleStep = 5
+  angleStep = 5 #5 original
   #######################################
 
 
   ##### User's input normalization #####
   if not options? then options = {}
   # maximum allowed aspect ratio for the rectangle solution
-  if not options.maxAspectRatio? then options.maxAspectRatio = 15
-  if not options.minWidth? then options.minWidth = 0
-  if not options.minHeight? then options.minHeight = 0
-  if not options.tolerance? then options.tolerance = 0.02
-  if not options.nTries? then options.nTries = 20 # Default value for the number of possible center points of the maximal rectangle
+  options.maxAspectRatio = options.maxAspectRatio || 15
+  options.minWidth = options.minWidth || 0
+  options.minHeight = options.minHeight || 0
+  options.tolerance = options.tolerance || 0.02
+
+  options.nTries = options.nTries || 100 #20 original # Default value for the number of possible center points of the maximal rectangle
 
   if options.angle?
     if options.angle instanceof Array then angles = options.angle
@@ -93,22 +87,16 @@ module.exports = (poly, options) ->
 
 
   ########################################
-  area = Math.abs(d3.geom.polygon(poly).area()) # take absolute value of the signed area
-  if area is 0
-    # print.error 'polygon has 0 area'
-    return null
+  area = d3.geom.polygon(poly).area()
   # get the width of the bounding box of the original polygon to determine tolerance
   [minx, maxx] = d3.extent poly, (d) -> d[0]
   [miny, maxy] = d3.extent poly, (d) -> d[1]
 
   # simplify polygon
   # tolerance = Math.min(maxx - minx, maxy - miny) * options.tolerance
-  # tempPoly = ({x:p[0], y:p[1]} for p in poly)
-
   # if tolerance > 0
-  #   tempPoly = simplify tempPoly, tolerance
-  #   poly = ([p.x, p.y] for p in tempPoly)
-  # if options.vdebug then events.push type: 'simplify', poly: poly
+  #   poly = simplify poly, tolerance
+  #   if options.vdebug then events.push type: 'simplify', poly: poly
 
   # get the width of the bounding box of the simplified polygon
   [minx, maxx] = d3.extent poly, (d) -> d[0]
@@ -117,7 +105,7 @@ module.exports = (poly, options) ->
   [boxWidth, boxHeight] = [maxx - minx, maxy - miny]
 
   # discretize the binary search for optimal width to a resolution of this times the polygon width
-  widthStep = Math.min(boxWidth, boxHeight)/50
+  widthStep = Math.min(boxWidth, boxHeight)/200    #original 50
 
   # populate possible center points with random points inside the polygon
   if not origins?
@@ -143,28 +131,21 @@ module.exports = (poly, options) ->
       # generate improved origins
       [p1W, p2W] = intersectPoints poly, origOrigin, angleRad
       [p1H, p2H] = intersectPoints poly, origOrigin, angleRad + Math.PI/2
-      modifOrigins = []
-      if p1W? and p2W? then modifOrigins.push [(p1W[0] + p2W[0])/2, (p1W[1] + p2W[1])/2] # average along with width axis
-      if p1H? and p2H? then modifOrigins.push [(p1H[0] + p2H[0])/2, (p1H[1] + p2H[1])/2] # average along with height axis
-
+      modifOrigins = [
+        [(p1W[0] + p2W[0])/2, (p1W[1] + p2W[1])/2], # average along with width axis
+        [(p1H[0] + p2H[0])/2, (p1H[1] + p2H[1])/2] # average along with height axis
+      ]
       if options.vdebug then events.push type: 'modifOrigin', idx: i, p1W: p1W, p2W: p2W, p1H: p1H, p2H: p2H, modifOrigins: modifOrigins
-
       for origin in modifOrigins
-
         if options.vdebug then events.push type: 'origin', cx: origin[0], cy: origin[1]
-
         [p1W, p2W] = intersectPoints poly, origin, angleRad
-        continue if p1W is null or p2W is null
         minSqDistW = Math.min squaredDist(origin, p1W), squaredDist(origin, p2W)
         maxWidth = 2*Math.sqrt(minSqDistW)
 
         [p1H, p2H] = intersectPoints poly, origin, angleRad + Math.PI/2
-        continue if p1H is null or p2H is null
         minSqDistH = Math.min squaredDist(origin, p1H), squaredDist(origin, p2H)
         maxHeight = 2*Math.sqrt(minSqDistH)
-
         continue if maxWidth * maxHeight < maxArea
-
         if aspectRatios? then aRatios = aspectRatios
         else
           minAspectRatio = Math.max 1, options.minWidth / maxHeight, maxArea/(maxHeight*maxHeight)
@@ -354,5 +335,4 @@ intersectPoints = (poly, origin, alpha) ->
         if sqDist < minSqDistRight
           minSqDistRight = sqDist
           closestPointRight = p
-
   return [closestPointLeft, closestPointRight]

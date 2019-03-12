@@ -46,14 +46,20 @@ initjs <- function(){
 ##' }
 ##' @export
 ##' 
-find_lr <- function(ct, xy, options){
+find_lr <- function(ct, xy, options ){
+  # if(missing(options)){options = NULL}
   ## xy MUST be a two-column matrix. This transfers it as
   ## an Array of Arrays:
   ct$assign("xy",xy)
   ## call the largest rectangle routine and return the result
   ## TODO: pass options here
-  lrect = ct$get("window.largestRect(xy)")
-  lrect
+  ct$assign("options",options)
+  tryCatch(
+    {lrect = ct$get("window.largestRect(xy)")
+    lrect}, error = function(e){
+      find_lr(ct, xy, options)
+    }
+    )
 }
 ##' Rotation matrix
 ##'
