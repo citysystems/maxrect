@@ -53,9 +53,9 @@ window.largestRect = (poly, options) ->
 
   ########## Algorithm constants ##########
   # step size for the aspect ratio
-  aspectRatioStep = 0.1 #0.5 original
+  aspectRatioStep = 0.1
   # step size for angles (in degrees); has linear impact on running time
-  angleStep = 5 #5 original
+  angleStep = 1
   #######################################
 
 
@@ -67,7 +67,7 @@ window.largestRect = (poly, options) ->
   options.minHeight = options.minHeight || 0
   options.tolerance = options.tolerance || 0.02
 
-  options.nTries = options.nTries || 100 #20 original # Default value for the number of possible center points of the maximal rectangle
+  options.nTries = options.nTries || 1000 # Default value for the number of possible center points of the maximal rectangle
 
   if options.angle?
     if options.angle instanceof Array then angles = options.angle
@@ -105,7 +105,7 @@ window.largestRect = (poly, options) ->
   [boxWidth, boxHeight] = [maxx - minx, maxy - miny]
 
   # discretize the binary search for optimal width to a resolution of this times the polygon width
-  widthStep = Math.min(boxWidth, boxHeight)/200    #original 50
+  widthStep = Math.min(boxWidth, boxHeight)/25
 
   # populate possible center points with random points inside the polygon
   if not origins?
