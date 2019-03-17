@@ -4,16 +4,76 @@ library(maxrectangle)
 library(jsonlite)
 library(readr)
 library(MASS)
+library(sp)
 
 json_file <- "epaparcelsnobldg.json"
-json_data <- fromJSON(txt=json_file, flatten = TRUE, simplifyDataFrame = TRUE)
-json_data <- json_data$json_geometry.coordinates
+full_json_data <- fromJSON(txt=json_file, flatten = TRUE, simplifyDataFrame = TRUE)
+json_data <- full_json_data$json_geometry.coordinates
 len_json <- length(json_data)
+
+# json_block <- "epaparcels_dissolved/Vertices.geojson"
+# json_block_data <- fromJSON(txt=json_block, flatten = TRUE, simplifyDataFrame = TRUE, simplifyMatrix = TRUE)
+# json_block_data <- json_block_data$features$geometry.coordinates
+# json_block_length <- length(json_block_data)
+# json_block_points <- array(data = 0, dim = c(json_block_length, 2))
+# for(i in 1:json_block_length){
+#   if(is.null(json_block_data[[i]])){next}
+#   json_block_points[i,1] <- json_block_data[[i]][1]
+#   json_block_points[i,2] <- json_block_data[[i]][2]
+# }
+# json_block_points <- json_block_points[json_block_points[,1] != 0,]
+# json_block_points <- json_block_points[order( json_block_points[,1], json_block_points[,2]),]
+
+json_block <- "epaparcels_dissolved/epaparcels_dissolved_adj.geojson"
+json_block_data <- fromJSON(txt=json_block, flatten = TRUE, simplifyDataFrame = TRUE, simplifyMatrix = TRUE)
+json_block_data <- json_block_data$features$geometry.coordinates[[1]]
+
+json_block_length <- 0
+for(i in 1:length(json_block_data)){
+  json_block_data[[i]] <- drop(json_block_data[[i]])
+  json_block_length <- json_block_length + dim(json_block_data[[i]])[1]
+}
+jsonIndex <- 1
+json_block_points <- array(data = 0, dim = c(json_block_length, 2))
+for(i in 1:length(json_block_data)){
+  for(j in 1:dim(json_block_data[[i]])[1]){
+    json_block_points[jsonIndex,] <- json_block_data[[i]][j,]
+    jsonIndex <- jsonIndex + 1
+  }
+}
+json_block_points <- json_block_points[order( json_block_points[,1], json_block_points[,2]),]
+
+
+
+# Check if merge ring cuts at the front
+# Inputs two points (x, y coordinate 1 x 2 vector)
+# Outputs a boolean
+isFront <- function(point1, point2){
+  # Check if point1 matches json_block_data
+  index <- findInterval(point1[1], json_block_points[,1])
+  while(isTRUE(all.equal(point1[1], json_block_points[index,1]))){         # search all coordinates w/ same X coord
+    if(isTRUE(all.equal(point1[2], json_block_points[index,2]))){return(TRUE)}
+    index <- index + 1
+  }
+  # Check if point2 matches json_block_data
+  index <- findInterval(point2[1], json_block_points[,1])
+  while(isTRUE(all.equal(point2[1], json_block_points[index,1]))){         # search all coordinates w/ same X coord
+    if(isTRUE(all.equal(point2[2], json_block_points[index,2]))){return(TRUE)}
+    index <- index + 1
+  }
+  # for (i in 1:json_block_length){
+  #   if(isTRUE(all.equal(point1, json_block_points[i,])) || isTRUE(all.equal(point2, json_block_points[i,]))){
+  #     return(TRUE)
+  #   }
+  # }
+  # If nothing returns true, return false
+  return(FALSE)
+}
 
 # ring1 and ring2 are arrays of dim [x, 2] AND/OR lists of already merged rings
 # Function is recursively to merge rings if list(s) is passed as an input
 # returns list of merged rings
-merge_rings <- function(ringA, ringB){ 
+merge_rings <- function(ringA, ringB, frontCut = FALSE){ 
   result <- list()
   if (typeof(ringA) == "list"){
     indexA <- length(ringA)
@@ -25,14 +85,14 @@ merge_rings <- function(ringA, ringB){
   # Case 1: ringA is a list, ringB is an array
   if (indexA > 1 && indexB == 1){   #check if there are any lists
     for(j in 1:indexA){
-      result <- append(result, merge_rings(ringA[[j]], ringB))
+      result <- append(result, merge_rings(ringA[[j]], ringB, FALSE))
     }
   } 
   
   # Case 2: ringB is a list, ringA is an array
   else if (indexA == 1 && indexB > 1){
     for(k in 1:indexB){
-      result <- append(result, merge_rings(ringA, ringB[[k]]))
+      result <- append(result, merge_rings(ringA, ringB[[k]], FALSE))
     }
   }
   
@@ -40,7 +100,7 @@ merge_rings <- function(ringA, ringB){
   else if (indexA > 1 && indexB > 1){
     for(j in 1:indexA){
       for(k in 1:indexB){
-        result <- append(result, merge_rings(ringA[[j]], ringB[[k]]))
+        result <- append(result, merge_rings(ringA[[j]], ringB[[k]], FALSE))
       }
     }
   }
@@ -77,10 +137,31 @@ merge_rings <- function(ringA, ringB){
       # saves index of closest ring2 point
       ring2_closest[m] <- min_index
     }
+    cutIndex <- vector(mode = "logical", len_r2)
+    cutIndex[] <- TRUE
+    if (frontCut){
+      # ID the indices for points on ring1 and ring2 for the cuts after confirming that it goes through the front
+      cutIndex[] <- FALSE
+      # Filter index to get cuts that go through the front
+      for(m in 1:len_r2){
+        # index1 = m
+        point1 <- ring2[m,]
+        index2 <- ring2_closest[m]
+        point2 <- ring1[ring2_closest[m],]
+        if (isFront(point1, point2)) {
+          cutIndex[m] <- TRUE
+        }
+      }
+      # Remove empty rows
+      if(sum(cutIndex) == 0){                     # If no matches for front cut, switch to no front cut
+        frontCut <- FALSE
+        cutIndex[] <- TRUE                        # 
+      }
+    }
     
     result <- vector("list", len_r2)
-    
     for(i in 1:len_r2){
+      if(cutIndex[i] == FALSE){next}
       # merge rings for 1 iteration
       ring_merge <- cbind(vector("double", len_r1+len_r2+3),vector("double", len_r1+len_r2+3))
       index_merge <- 1   # keep track of index in ring_merge
@@ -112,16 +193,44 @@ merge_rings <- function(ringA, ringB){
       ring_merge[index_merge,2] <- ring2[index2,2]
       result[[i]] <- ring_merge
     }
+    if(frontCut){                   # remove empty indices
+      result <- result[cutIndex]
+    }
+    if (length(result) == 1){return(result[[1]])} else{return(result)}
+  }
+  if (length(result) == 1){return(result[[1]])} else{return(result)}
+}
+
+# Create recursive function to unpack array with more than 2 polygons
+# Takes an array
+# Returns a list of merged arrays
+# Account for errors
+unpackArray <-local({
+  function(arr) {
+    dim <- dim(arr)    # get length of first dimension of array
+    if(length(dim) > 3){
+      print("Error. Nonconforming array")
+      return()
+    }
+    if(dim[3] == 2){       # add first poly
+      result <- arr[1,,]
+    } else{
+      print("Error")
+      return()
+    }
+    for(i in 2:dim[1]){       # go through list
+      # check if element is a list or array
+      result <- merge_rings(result, arr[i,,], TRUE)
+    }
     return(result)
   }
-  return(result)
-}
+})
+
 
 
 # Create recursive function to unpack list elements
 # Takes a list (maybe of more lists)
 # Returns a list of merged arrays
-# Account for errors later
 unpackList <-local({
   function(lst) {
     len <- length(lst)    # get length of list
@@ -139,11 +248,11 @@ unpackList <-local({
     for(i in 2:len){       # go through list
       # check if element is a list or array
       if (typeof(lst[[i]]) == "list"){
-        result <- merge_rings(result, unpackList(lst[[i]])) # merge onto existing result, recursively call function
+        result <- merge_rings(result, unpackList(lst[[i]]), TRUE) # merge onto existing result, recursively call function
       } else if (typeof(lst[[i]]) == "double"){
         arr <- drop(lst[[i]])
         if (length(dim(arr)) == 2 && dim(arr)[2] == 2){   # check that array has R x 2 dimensions
-          result <- merge_rings(result, arr)                # merge onto existing result
+          result <- merge_rings(result, arr, TRUE)                # merge onto existing result
         } 
       } else{
         print("Error")
@@ -165,20 +274,23 @@ for(a in 1:len_json) {
   # Check the type of data: double (aka array) or list
   arr <- drop(json_data[[a]]) # gets rid of dimensions of 1 length
   if (typeof(json_data[[a]]) == "double") { # is an array [a x b x c]
-    if(dim(arr)[1] == 2 && dim(arr)[3] == 2) { # if array is [2 x b x 2]
+    if(length(dim(arr)) == 3 && dim(arr)[1] == 2 && dim(arr)[3] == 2) { # if array is [2 x b x 2]
       ring1 <- arr[1,,]
       ring2 <- arr[2,,]
-      all_merged_rings[[a]] <- merge_rings(ring1,ring2)
+      all_merged_rings[[a]] <- merge_rings(ring1,ring2,TRUE)
       # all_merged_rings[[a]] <- 1
     }
-    else if (dim(arr)[2] == 2){    # if is just one polygon, return that polygon
+    else if (length(dim(arr)) == 2 && dim(arr)[2] == 2){    # if is just one polygon, return that polygon
       all_merged_rings[[a]] <- arr
+    }
+    else if (length(dim(arr)) == 3 && dim(arr)[1] > 2 && dim(arr)[3] == 2){ # if array is [a x b x 2] where a > 2
+      all_merged_rings[[a]] <- unpackArray(arr)
     }
     else {
       manualJSON[jsonIndex, 1] <- a
       manualJSON[jsonIndex, 2] <- "nonconforming array"
       jsonIndex <- jsonIndex + 1
-    }                                       
+    }                                  
   } 
   else if (typeof(json_data[[a]]) == "list") {
     if (length(json_data[[a]]) > 5){
@@ -306,6 +418,20 @@ for(a in 1:5051) {
   }
 }
 
+
+
+# Find max rectangle
+# 
+
+
+all_merged_rings[[4]][[1]]
+all_merged_rings[[4]][[1]][1,]
+View(all_merged_rings[[4]][[1]])
+isFront(all_merged_rings[[4]][[1]], all_merged_rings[[4]][[2]])
+eqscplot(all_merged_rings[[4]][[2]], type= "l")
+
+
+
 ##########################
 # Accessory functions for troubleshooting
 
@@ -371,3 +497,21 @@ plot_call <- function(index1,index2){
 plot_merged <- function(index){
   eqscplot(all_merged_rings[[error_poly[index,1]]][[error_poly[index,2]]], type= "l")
 }
+
+########
+#Export shapefiles
+
+crds <- cbind(x=c(0, 0, 400, 400, 0), y=c(0, 400, 400, 0, 0))
+str(crds)
+Pl <- Polygon(crds)
+str(Pl)
+ID <- "400x400"
+Pls <- Polygons(list(Pl), ID=ID)
+str(Pls)
+SPls <- SpatialPolygons(list(Pls))
+str(SPls)
+df <- data.frame(value=1, row.names=ID)
+str(df)
+SPDF <- SpatialPolygonsDataFrame(SPls, df)
+str(SPDF)
+
