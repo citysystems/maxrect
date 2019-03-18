@@ -257,7 +257,7 @@ unpackList <-local({
       } else{
         print("Error")
         return()
-        }
+      }
     }
     return(result)
   }
@@ -296,6 +296,7 @@ for(a in 1:len_json) {
     if (length(json_data[[a]]) > 5){
       manualJSON[jsonIndex, 1] <- a
       manualJSON[jsonIndex, 2] <- "long list"
+      jsonIndex <- jsonIndex + 1
     } else{all_merged_rings[[a]] <- unpackList(json_data[[a]])}
   }
   else{
@@ -353,7 +354,19 @@ prepPoly <- function(poly){
   return(list(poly,minX,minY))
 }
 
-# Test that shows find_lr works with output
+# 
+test <- vector(mode = "double", length = 5051)
+for(i in 1:5051){
+  print(i)
+  if(typeof(all_merged_rings[[i]]) == "list"){
+    test[i] <-  length(all_merged_rings[[i]])
+  }
+  else{
+    test[i] <- dim(all_merged_rings[[i]])[1]
+  }
+}
+
+# Run to find maxrect for all polygon combinations
 count_success <- 0
 count_error <- 0
 error_poly <- array(0, dim=c(1000,2))
@@ -372,22 +385,22 @@ for(a in 1:5051) {
       minX <- result[[2]]
       minY <- result[[3]]
       tryCatch({lr = find_lr(ctx, poly)
-                count_success <<- count_success + 1
-                poly[,1] <- poly[,1] + minX
-                poly[,2] <- poly[,2] + minY
-                lr[[1]]$cx <- lr[[1]]$cx + minX
-                lr[[1]]$cy <- lr[[1]]$cy + minY
-                listMaxRect[[a]][[b]] <- lr[[1]]
-                eqscplot(poly, type= "l")
-                pp = plotrect(lr[[1]])
-                lines(pp)
-                print("success")
-                },
-               error = function(e){
-                                    print(paste("Error, skipping ", a, ", ", b))
-                                    error_poly[index_poly,] <<- c(a,b)
-                                    index_poly <<- index_poly + 1
-                                  }
+      count_success <<- count_success + 1
+      poly[,1] <- poly[,1] + minX
+      poly[,2] <- poly[,2] + minY
+      lr[[1]]$cx <- lr[[1]]$cx + minX
+      lr[[1]]$cy <- lr[[1]]$cy + minY
+      listMaxRect[[a]][[b]] <- lr[[1]]
+      eqscplot(poly, type= "l")
+      pp = plotrect(lr[[1]])
+      lines(pp)
+      print("success")
+      },
+      error = function(e){
+        print(paste("Error, skipping ", a, ", ", b))
+        error_poly[index_poly,] <<- c(a,b)
+        index_poly <<- index_poly + 1
+      }
       )
     }
   } else if(typeof(all_merged_rings[[a]]) == "double"){
@@ -398,22 +411,20 @@ for(a in 1:5051) {
     minX <- result[[2]]
     minY <- result[[3]]
     tryCatch({lr = find_lr(ctx, poly)
-            count_success <<- count_success + 1
-            poly[,1] <- poly[,1] + minX
-            poly[,2] <- poly[,2] + minY
-            lr[[1]]$cx <- lr[[1]]$cx + minX
-            lr[[1]]$cy <- lr[[1]]$cy + minY
-            listMaxRect[[a]][[b]] <- lr[[1]]
-            eqscplot(poly, type= "l")
-            pp = plotrect(lr[[1]])
-            lines(pp)
-            print("success")
-            },
-            error = function(e){
-              print(paste("Error, skipping ", a, ", ", b))
-              error_poly[index_poly,] <<- c(a,b)
-              index_poly <<- index_poly + 1
-            }
+    count_success <<- count_success + 1
+    lr[[1]]$cx <- lr[[1]]$cx + minX
+    lr[[1]]$cy <- lr[[1]]$cy + minY
+    listMaxRect[[a]][[1]] <- lr[[1]]
+    eqscplot(result[[1]], type= "l")
+    pp = plotrect(lr[[1]])
+    lines(pp)
+    print("success")
+    },
+    error = function(e){
+      print(paste("Error, skipping ", a, ", 1"))
+      error_poly[index_poly,] <<- c(a,b)
+      index_poly <<- index_poly + 1
+    }
     )
   }
 }
