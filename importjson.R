@@ -8,8 +8,30 @@ library(sp)
 
 json_file <- "epaparcelsnobldg.json"
 full_json_data <- fromJSON(txt=json_file, flatten = TRUE, simplifyDataFrame = TRUE)
+
+# Filter down to 3920 SFH parcels
+apn_file <- "apn.csv"
+apn <- read_csv(apn_file)
+apn <- paste( "0", apn$apn, sep = "")
+full_json_data <- dplyr::filter(full_json_data, APN %in% apn)
+
+# Pull polygons
 json_data <- full_json_data$json_geometry.coordinates
 len_json <- length(json_data)
+
+
+# Find number of polygons for each parcel
+numPoly <- vector(mode = "double", length = length(json_data))
+for (i in 1:len_json){
+  if (typeof(json_data[[i]]) == "list"){
+    test[i] <- length(json_data[[i]])
+  } else if (typeof(json_data[[i]]) == "double"){
+    test[i] <- dim(json_data[[i]])[1]
+  } else {
+    test[i] <- 0
+  }
+}
+table(test)
 
 # json_block <- "epaparcels_dissolved/Vertices.geojson"
 # json_block_data <- fromJSON(txt=json_block, flatten = TRUE, simplifyDataFrame = TRUE, simplifyMatrix = TRUE)
@@ -43,7 +65,65 @@ for(i in 1:length(json_block_data)){
 }
 json_block_points <- json_block_points[order( json_block_points[,1], json_block_points[,2]),]
 
+# Check if point is at front
+# Inputs one point (x, y coordinate 1 x 2 vector)
+# Outputs a boolean
+isFront1 <- function(point){
+  # Check if point matches json_block_data
+  index <- findInterval(point[1], json_block_points[,1])
+  while(isTRUE(all.equal(point[1], json_block_points[index,1], tolerance = 1e-5))){         # search all coordinates w/ same X coord
+    if(isTRUE(all.equal(point[2], json_block_points[index,2], tolerance = 1e-5))){return(TRUE)}
+    index <- index + 1
+  }
+  return(FALSE)
+}
 
+# Find number of landlocked parcels (all points are touching another parcel)
+# First, pull all the coordinates for the first polygon for each parcel
+checkFront <- vector(mode = "logical", len_json)
+numFront <- vector(mode = "double", len_json)
+for (i in 1:len_json){
+  print(i)
+  if (typeof(json_data[[i]]) == "list"){
+    poly <- drop(json_data[[i]][[1]])
+  }
+  else if (typeof(json_data[[i]]) == "double"){
+    if (length(dim(json_data[[i]])) > 3){
+      poly <- drop(json_data[[i]])[1,,]
+    }
+    else{poly <- json_data[[i]][1,,]}
+  }
+  else{
+    break
+  }
+  for (j in 1:dim(poly)[1]){
+    if (isFront1(poly[j,])){
+      checkFront[i] <- TRUE
+      numFront[i] <- numFront[i] + 1
+    }
+  }
+}
+
+sum(checkFront)
+length(numFront[numFront > 0])
+length(numFront[numFront > 1])
+length(numFront[numFront > 2])
+length(numFront[numFront > 3])
+
+landlocked <- vector("logical", len_json - sum(checkFront))
+index <- 1
+for (i in 1:len_json){
+  if (!checkFront[i]){
+    landlocked[index] <- i
+    index <- index + 1
+  }
+}
+landlockedAPNs <- vector("logical", len_json - sum(checkFront))
+for (i in 1:(len_json - sum(checkFront))){
+  print(i)
+  landlockedAPNs[i] <- full_json_data$APN[[landlocked[i]]]
+}
+write_csv(as.data.frame(landlockedAPNs), "landlockedAPNs.csv")
 
 # Check if merge ring cuts at the front
 # Inputs two points (x, y coordinate 1 x 2 vector)
@@ -354,18 +434,20 @@ prepPoly <- function(poly){
   return(list(poly,minX,minY))
 }
 
-# 
+# See # of combinations of cuts 
 test <- vector(mode = "double", length = 5051)
 for(i in 1:5051){
   print(i)
   if(typeof(all_merged_rings[[i]]) == "list"){
     test[i] <-  length(all_merged_rings[[i]])
   }
-  else{
+  else if (typeof(all_merged_rings[[i]]) == "double"){
     test[i] <- dim(all_merged_rings[[i]])[1]
+  } else if (is.na(all_merged_rings[[i]])){
+    next
   }
 }
-
+View(test)
 # Run to find maxrect for all polygon combinations
 count_success <- 0
 count_error <- 0
@@ -377,7 +459,7 @@ for(a in 1:5051) {
   ## process list types
   if(typeof(all_merged_rings[[a]]) == "list"){
     len = length(all_merged_rings[[a]])
-    for(b in 1:len){
+    for(b in 1:min(len,22)){                    # if number of combinations tested capped at 64 (90th %ile)
       print(paste(a, ",", b))
       ctx = initjs()
       result <- prepPoly(all_merged_rings[[a]][[b]])
@@ -390,7 +472,7 @@ for(a in 1:5051) {
       poly[,2] <- poly[,2] + minY
       lr[[1]]$cx <- lr[[1]]$cx + minX
       lr[[1]]$cy <- lr[[1]]$cy + minY
-      listMaxRect[[a]][[b]] <- lr[[1]]
+      listMaxRect[[a]][[b]] <- lr
       eqscplot(poly, type= "l")
       pp = plotrect(lr[[1]])
       lines(pp)
@@ -412,10 +494,12 @@ for(a in 1:5051) {
     minY <- result[[3]]
     tryCatch({lr = find_lr(ctx, poly)
     count_success <<- count_success + 1
+    poly[,1] <- poly[,1] + minX
+    poly[,2] <- poly[,2] + minY
     lr[[1]]$cx <- lr[[1]]$cx + minX
     lr[[1]]$cy <- lr[[1]]$cy + minY
-    listMaxRect[[a]][[1]] <- lr[[1]]
-    eqscplot(result[[1]], type= "l")
+    listMaxRect[[a]][[1]] <- lr
+    eqscplot(poly, type= "l")
     pp = plotrect(lr[[1]])
     lines(pp)
     print("success")
@@ -432,7 +516,21 @@ for(a in 1:5051) {
 
 
 # Find max rectangle
-# 
+# Loop through first index
+for (i in 1:length(listMaxRect)){
+  maxArea <- 0
+  maxIndex <- 0
+  # For each parcel, loop through each tested maxRect
+  for (j in 1:length(listMaxRect[[i]])){
+    lr <- listMaxRect[[i]][[j]]
+    if (lr[[2]] > maxArea){
+      maxArea <- lr[[2]]
+      maxIndex <- j
+    }
+  }
+  # At the end, assign 
+  listMaxRect[[i]] <- lr
+}
 
 
 all_merged_rings[[4]][[1]]
