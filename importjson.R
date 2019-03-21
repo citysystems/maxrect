@@ -5,65 +5,81 @@ library(jsonlite)
 library(readr)
 library(MASS)
 library(sp)
+library(dplyr)
 
+
+### parcels minus building footprint
 json_file <- "epaparcelsnobldg.json"
 full_json_data <- fromJSON(txt=json_file, flatten = TRUE, simplifyDataFrame = TRUE)
-
 # Filter down to 3920 SFH parcels
 apn_file <- "apn.csv"
 apn <- read_csv(apn_file)
 apn <- paste( "0", apn$apn, sep = "")
 full_json_data <- dplyr::filter(full_json_data, APN %in% apn)
-
 # Pull polygons
 json_data <- full_json_data$json_geometry.coordinates
 len_json <- length(json_data)
-
 
 # Find number of polygons for each parcel
 numPoly <- vector(mode = "double", length = length(json_data))
 for (i in 1:len_json){
   if (typeof(json_data[[i]]) == "list"){
-    test[i] <- length(json_data[[i]])
+    numPoly[i] <- length(json_data[[i]])
   } else if (typeof(json_data[[i]]) == "double"){
-    test[i] <- dim(json_data[[i]])[1]
+    numPoly[i] <- dim(json_data[[i]])[1]
   } else {
-    test[i] <- 0
+    numPoly[i] <- 0
   }
 }
-table(test)
+table(numPoly)
 
-# json_block <- "epaparcels_dissolved/Vertices.geojson"
-# json_block_data <- fromJSON(txt=json_block, flatten = TRUE, simplifyDataFrame = TRUE, simplifyMatrix = TRUE)
-# json_block_data <- json_block_data$features$geometry.coordinates
-# json_block_length <- length(json_block_data)
-# json_block_points <- array(data = 0, dim = c(json_block_length, 2))
-# for(i in 1:json_block_length){
-#   if(is.null(json_block_data[[i]])){next}
-#   json_block_points[i,1] <- json_block_data[[i]][1]
-#   json_block_points[i,2] <- json_block_data[[i]][2]
-# }
-# json_block_points <- json_block_points[json_block_points[,1] != 0,]
-# json_block_points <- json_block_points[order( json_block_points[,1], json_block_points[,2]),]
 
-json_block <- "epaparcels_dissolved/epaparcels_dissolved_adj.geojson"
+### parcels without building footprint
+parcel_file <- "epaparcels_clean.geojson"
+parcels <- fromJSON(txt=parcel_file, flatten = TRUE, simplifyDataFrame = TRUE)
+parcels <- parcels$features
+parcels <- dplyr::filter(parcels, properties.APN %in% full_json_data$APN)
+parcel_data <- parcels$geometry.coordinates
+
+
+### coordinates of front
+json_block <- "front_vertices_cleaned.geojson"
 json_block_data <- fromJSON(txt=json_block, flatten = TRUE, simplifyDataFrame = TRUE, simplifyMatrix = TRUE)
-json_block_data <- json_block_data$features$geometry.coordinates[[1]]
-
-json_block_length <- 0
-for(i in 1:length(json_block_data)){
-  json_block_data[[i]] <- drop(json_block_data[[i]])
-  json_block_length <- json_block_length + dim(json_block_data[[i]])[1]
-}
-jsonIndex <- 1
+json_block_data <- json_block_data$features$geometry.coordinates
+json_block_length <- length(json_block_data)
 json_block_points <- array(data = 0, dim = c(json_block_length, 2))
-for(i in 1:length(json_block_data)){
-  for(j in 1:dim(json_block_data[[i]])[1]){
-    json_block_points[jsonIndex,] <- json_block_data[[i]][j,]
-    jsonIndex <- jsonIndex + 1
-  }
+for(i in 1:json_block_length){
+  print(i)
+  v <- json_block_data[[i]]
+  if(is.null(json_block_data[[i]])){next}
+  x <- v[1]
+  y <- v[2]
+  json_block_points[i,1] <- x
+  json_block_points[i,2] <- y
 }
+json_block_points <- json_block_points[json_block_points[,1] != 0,]
 json_block_points <- json_block_points[order( json_block_points[,1], json_block_points[,2]),]
+json_block_points <- unique(json_block_points)
+json_block_length <- dim(json_block_points)[1]
+
+# json_block <- "epaparcels_dissolved/epaparcels_dissolved_adj.geojson"
+# json_block_data <- fromJSON(txt=json_block, flatten = TRUE, simplifyDataFrame = TRUE, simplifyMatrix = TRUE)
+# json_block_data <- json_block_data$features$geometry.coordinates[[1]]
+# 
+# json_block_length <- 0
+# for(i in 1:length(json_block_data)){
+#   json_block_data[[i]] <- drop(json_block_data[[i]])
+#   json_block_length <- json_block_length + dim(json_block_data[[i]])[1]
+# }
+# jsonIndex <- 1
+# json_block_points <- array(data = 0, dim = c(json_block_length, 2))
+# for(i in 1:length(json_block_data)){
+#   for(j in 1:dim(json_block_data[[i]])[1]){
+#     json_block_points[jsonIndex,] <- json_block_data[[i]][j,]
+#     jsonIndex <- jsonIndex + 1
+#   }
+# }
+# json_block_points <- json_block_points[order( json_block_points[,1], json_block_points[,2]),]
 
 # Check if point is at front
 # Inputs one point (x, y coordinate 1 x 2 vector)
@@ -71,17 +87,24 @@ json_block_points <- json_block_points[order( json_block_points[,1], json_block_
 isFront1 <- function(point){
   # Check if point matches json_block_data
   index <- findInterval(point[1], json_block_points[,1])
-  while(isTRUE(all.equal(point[1], json_block_points[index,1], tolerance = 1e-5))){         # search all coordinates w/ same X coord
-    if(isTRUE(all.equal(point[2], json_block_points[index,2], tolerance = 1e-5))){return(TRUE)}
+  while((index > 0) && (index <= dim(json_block_points)[1]) && (abs(point[1] - json_block_points[index,1]) <= 0.01)){         # search all coordinates w/ same X coord
+    if(abs(point[2] - json_block_points[index,2]) <= 0.01){return(TRUE)}
+    index <- index + 1
+  }
+  index <- index + 1
+  while((index > 0) && (index <= dim(json_block_points)[1]) && (abs(point[1] - json_block_points[index,1]) <= 0.01)){         # search all coordinates w/ same X coord
+    if(abs(point[2] - json_block_points[index,2]) <= 0.01){return(TRUE)}
     index <- index + 1
   }
   return(FALSE)
 }
 
+json_data <-  parcel_data        #### DOUBLE CHECK THIS VARIABLE EVERY TIME
 # Find number of landlocked parcels (all points are touching another parcel)
 # First, pull all the coordinates for the first polygon for each parcel
-checkFront <- vector(mode = "logical", len_json)
-numFront <- vector(mode = "double", len_json)
+checkFront <- vector("logical", len_json)   # Keep track of whether a parcel touches the front
+numFront <- vector("double", len_json)      # Keep track of number of points that touch the front
+indexFront <- vector("list", len_json)      # Keep track of index of points that touch the front
 for (i in 1:len_json){
   print(i)
   if (typeof(json_data[[i]]) == "list"){
@@ -89,26 +112,82 @@ for (i in 1:len_json){
   }
   else if (typeof(json_data[[i]]) == "double"){
     if (length(dim(json_data[[i]])) > 3){
-      poly <- drop(json_data[[i]])[1,,]
+      # poly <- drop(json_data[[i]])[1,,]
+      poly <- drop(json_data[[i]])
     }
     else{poly <- json_data[[i]][1,,]}
   }
   else{
     break
   }
-  for (j in 1:dim(poly)[1]){
+  indexFront[[i]] <- vector("logical", dim(poly)[1]-1)
+  for (j in 1:(dim(poly)[1]-1)){
     if (isFront1(poly[j,])){
       checkFront[i] <- TRUE
+      indexFront[[i]][j] <- TRUE
       numFront[i] <- numFront[i] + 1
     }
   }
 }
 
 sum(checkFront)
-length(numFront[numFront > 0])
-length(numFront[numFront > 1])
+length(numFront[numFront == 0])
+length(numFront[numFront == 1])
+length(numFront[numFront == 2])
 length(numFront[numFront > 2])
-length(numFront[numFront > 3])
+
+
+
+# Front indices may be out of order if the polygon starting point is in the middle of the front
+chunks <- vector("double", len_json)              # chunks of points marked as front
+false_chunks <- vector("double", len_json)        # chunks of points not marked as front (used to ID problems)
+offsetFront <- vector("double", len_json)
+for (i in 1:len_json){
+  preVal <- FALSE
+  arr <- indexFront[[i]]
+  for (j in 1:length(arr)){
+    if (preVal == FALSE && arr[j]){chunks[i] <- chunks[i] + 1}
+    if (preVal && arr[j] == FALSE){false_chunks[i] <- false_chunks[i] + 1}
+    preVal <- arr[j]
+  }
+  # if (arr[1] == TRUE && arr[length(arr)] == TRUE){   # Find number of spots to offset
+  #   for (j in 1:length(arr)){
+  #     while (arr[j]){
+  #       offsetFront[i] <- offsetFront[i] + 1
+  #     }
+  #     if (!arr[j]){next}
+  #   }
+  # }
+}
+table(chunks)
+table(false_chunks)
+
+parcelFront <- vector(mode = "list", len_json)     # Keep track of the points that touch the front
+for (i in 1:len_json){
+  if (checkFront[i]){   # Check whether we need to save any points
+    parcelFront[[i]] <- array(dim = c(numFront[i],2))
+    index <- 1
+    if (typeof(json_data[[i]]) == "list"){
+      poly <- drop(json_data[[i]][[1]])
+    }
+    else if (typeof(json_data[[i]]) == "double"){
+      if (length(dim(json_data[[i]])) > 3){
+        poly <- drop(json_data[[i]])[1,,]
+      }
+      else{poly <- json_data[[i]][1,,]}
+    }
+    for (j in 1:(dim(poly)[1]-1)){
+      if (isFront1(poly[j,])){
+        parcelFront[[i]][index,] <- poly[j,]
+        index <- index + 1
+      }
+    }
+  }
+}
+
+
+
+
 
 landlocked <- vector("logical", len_json - sum(checkFront))
 index <- 1
