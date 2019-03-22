@@ -86,18 +86,45 @@ json_block_length <- dim(json_block_points)[1]
 # Outputs a boolean
 isFront1 <- function(point){
   # Check if point matches json_block_data
-  index <- findInterval(point[1], json_block_points[,1])
-  while((index > 0) && (index <= dim(json_block_points)[1]) && (abs(point[1] - json_block_points[index,1]) <= 0.01)){         # search all coordinates w/ same X coord
-    if(abs(point[2] - json_block_points[index,2]) <= 0.01){return(TRUE)}
-    index <- index + 1
-  }
-  index <- index + 1
-  while((index > 0) && (index <= dim(json_block_points)[1]) && (abs(point[1] - json_block_points[index,1]) <= 0.01)){         # search all coordinates w/ same X coord
-    if(abs(point[2] - json_block_points[index,2]) <= 0.01){return(TRUE)}
+  index <- findInterval(point[1], json_block_points[,1])  # This index may be +/- 1 from the actual value
+  if (index > 0) {index <- index - 1}                   # Move back one
+  for (i in 1:3){                      # Make sure a minimum of three iterations done before stopping
+    while((index > 0) && (index <= dim(json_block_points)[1]) && (abs(point[1] - json_block_points[index,1]) <= 0.01)){         # search all coordinates w/ same X coord
+      if(abs(point[2] - json_block_points[index,2]) <= 0.01){return(TRUE)}
+      index <- index + 1
+    }
     index <- index + 1
   }
   return(FALSE)
 }
+
+# Remove unnecessary points from parcel (if two adj line segments are collinear, remove middle point)
+# Inputs a polygon (n by 2 array)
+# Outputs a modified polygon (n by 2 array)
+removeCollinear <- function(arr){
+  angle <- vector(mode = "double", length = dim(arr)[1]-1)
+  for (j in 1:length(angle)){
+    angle[j] <- atan2(arr[j+1,2]-arr[j,2], arr[j+1,1]-arr[j,1])
+  }
+  i <- 2
+  while (i <= length(angle)){
+    if (abs(angle[i] - angle[i-1])/pi*180 < 0.5) {
+      arr <- arr[-i,]
+      angle[i-1] <- (angle[i]+angle[i-1])/2
+      angle <- angle[-i]
+      i <- i - 1            # adjust index, since we removed a point
+    }
+    i <- i + 1              # increment index
+  }
+  return(arr)
+}
+
+
+for (i in 1:len_json){
+  arr <- drop(parcel_data[[i]])
+  parcel_data[[i]] <- removeCollinear(arr)
+}
+
 
 json_data <-  parcel_data        #### DOUBLE CHECK THIS VARIABLE EVERY TIME
 # Find number of landlocked parcels (all points are touching another parcel)
@@ -108,20 +135,20 @@ indexFront <- vector("list", len_json)      # Keep track of index of points that
 for (i in 1:len_json){
   print(i)
   if (typeof(json_data[[i]]) == "list"){
-    poly <- drop(json_data[[i]][[1]])
+    poly <- unique(drop(json_data[[i]][[1]]))
   }
   else if (typeof(json_data[[i]]) == "double"){
-    if (length(dim(json_data[[i]])) > 3){
+    # if (length(dim(json_data[[i]])) > 3){
       # poly <- drop(json_data[[i]])[1,,]
-      poly <- drop(json_data[[i]])
-    }
-    else{poly <- json_data[[i]][1,,]}
+      poly <- unique(drop(json_data[[i]]))
+    # }
+    # else{poly <- unique(json_data[[i]][1,,])}
   }
   else{
     break
   }
-  indexFront[[i]] <- vector("logical", dim(poly)[1]-1)
-  for (j in 1:(dim(poly)[1]-1)){
+  indexFront[[i]] <- vector("logical", dim(poly)[1])
+  for (j in 1:dim(poly)[1]){
     if (isFront1(poly[j,])){
       checkFront[i] <- TRUE
       indexFront[[i]][j] <- TRUE
@@ -138,54 +165,157 @@ length(numFront[numFront > 2])
 
 
 
+
 # Front indices may be out of order if the polygon starting point is in the middle of the front
 chunks <- vector("double", len_json)              # chunks of points marked as front
 false_chunks <- vector("double", len_json)        # chunks of points not marked as front (used to ID problems)
-offsetFront <- vector("double", len_json)
+offsetFront <- vector("double", len_json)         # what number of points to move to the back
+deleteFront <- vector("double", len_json)         # what index point to remove
+chunks2 <- vector("double", len_json)              # chunks of points marked as front
+false_chunks2 <- vector("double", len_json)        # chunks of points not marked as front (used to ID problems)
 for (i in 1:len_json){
   preVal <- FALSE
   arr <- indexFront[[i]]
   for (j in 1:length(arr)){
-    if (preVal == FALSE && arr[j]){chunks[i] <- chunks[i] + 1}
-    if (preVal && arr[j] == FALSE){false_chunks[i] <- false_chunks[i] + 1}
+    if (j == 1 && arr[j]){chunks[i] <- chunks[i] + 1}
+    else if (j == 1 && arr[j] == FALSE){false_chunks[i] <- false_chunks[i] + 1}
+    else if (preVal == FALSE && arr[j]){chunks[i] <- chunks[i] + 1}
+    else if (preVal && arr[j] == FALSE){false_chunks[i] <- false_chunks[i] + 1}
     preVal <- arr[j]
   }
-  # if (arr[1] == TRUE && arr[length(arr)] == TRUE){   # Find number of spots to offset
-  #   for (j in 1:length(arr)){
-  #     while (arr[j]){
-  #       offsetFront[i] <- offsetFront[i] + 1
-  #     }
-  #     if (!arr[j]){next}
-  #   }
-  # }
+  # Track which parcel's front vertices need reordering
+  # If false_chunks < chunks, reorder by length of first true chunk
+  if (false_chunks[i] < chunks[i]){
+    for (j in 1:length(arr)){
+      if (!arr[j]){
+        break
+      }
+      offsetFront[i] <- offsetFront[i] + 1
+    }
+    indexFront[[i]] <- c(indexFront[[i]][-1:-offsetFront[i]], indexFront[[i]][1:offsetFront[i]])
+  }
+  preVal <- FALSE
+  for (j in 1:length(arr)){
+    if (j == 1 && indexFront[[i]][j]){chunks2[i] <- chunks2[i] + 1}
+    else if (j == 1 && indexFront[[i]][j] == FALSE){false_chunks2[i] <- false_chunks2[i] + 1}
+    else if (preVal == FALSE && indexFront[[i]][j]){chunks2[i] <- chunks2[i] + 1}
+    else if (preVal && indexFront[[i]][j] == FALSE){false_chunks2[i] <- false_chunks2[i] + 1}
+    preVal <- indexFront[[i]][j]
+  }
+  if (chunks2[i] == 2){
+    for (j in 2:(length(arr)-1)){
+      if (isTRUE(indexFront[[i]][j] && (!indexFront[[i]][j-1] && !indexFront[[i]][j+1]))){
+        deleteFront[i] <- j
+      }
+    }
+  }
 }
+
 table(chunks)
 table(false_chunks)
+table(chunks2)
+table(false_chunks2)
+table(deleteFront)
 
+View(cbind(chunks, false_chunks))
+View(cbind(chunks2, false_chunks2))
+
+# Extract parcel front points
 parcelFront <- vector(mode = "list", len_json)     # Keep track of the points that touch the front
 for (i in 1:len_json){
   if (checkFront[i]){   # Check whether we need to save any points
     parcelFront[[i]] <- array(dim = c(numFront[i],2))
     index <- 1
     if (typeof(json_data[[i]]) == "list"){
-      poly <- drop(json_data[[i]][[1]])
+      poly <- unique(drop(json_data[[i]][[1]]))
     }
     else if (typeof(json_data[[i]]) == "double"){
-      if (length(dim(json_data[[i]])) > 3){
-        poly <- drop(json_data[[i]])[1,,]
-      }
-      else{poly <- json_data[[i]][1,,]}
+      # if (length(dim(json_data[[i]])) > 3){
+        # poly <- drop(json_data[[i]])[1,,]
+        poly <- unique(drop(json_data[[i]]))
+      # }
+      # else{poly <- unique(json_data[[i]][1,,])}
     }
-    for (j in 1:(dim(poly)[1]-1)){
+    for (j in 1:(dim(poly)[1])){
       if (isFront1(poly[j,])){
         parcelFront[[i]][index,] <- poly[j,]
         index <- index + 1
       }
     }
   }
+  if (deleteFront[i] > 0){
+    parcelFront[[i]] <- parcelFront[[i]][-deleteFront[i],]
+  }
+  # Check if indices need rearranging
+  if (offsetFront[i] > 0){
+    parcelFront[[i]] <- rbind(parcelFront[[i]][-1:-offsetFront[i], ], parcelFront[[i]][1:offsetFront[i], ])
+  }
 }
 
 
+# Check if front edge is properly extracted
+for (i in 1:len_json){
+  print(i)
+  if (is.null(parcelFront[[i]])) {next}
+  if (dim(parcelFront[[i]])[1] == 1) {next}
+  else {eqscplot(parcelFront[[i]], type="l")}
+  Sys.sleep(0.05)  # Pause and continues automatically
+  # invisible(readline(prompt="Press [enter] to continue"))  # Manually press enter to continue
+}
+
+# Identify corner lots
+cornerStats <- vector(mode = "list", len_json)
+for (i in 1:len_json){
+  if(is.null(parcelFront[[i]])) {next}
+  else if (dim(parcelFront[[i]])[1] < 3) {next}
+  arr <- parcelFront[[i]]
+  # Find angles
+  angle <- vector(mode = "double", length = dim(arr)[1]-1)
+  for (j in 1:length(angle)){
+    angle[j] <- atan2(arr[j+1,2]-arr[j,2], arr[j+1,1]-arr[j,1])
+  }
+  totang1 <- atan2(arr[dim(arr)[1],2]-arr[1,2], arr[dim(arr)[1],1]-arr[1,1])
+  totang2 <- totang1 - pi
+  # Save angles
+  cornerStats[[i]]$angles <- angle/pi*180
+  # Average angle
+  cornerStats[[i]]$avg <- mean(angle)/pi*180
+  # Difference in angle between first segment and hypotenuse (first to last point)
+  cornerStats[[i]]$totdiff1 <- atan2(sin(totang1-angle[1]),cos(totang1-angle[1]))/pi*180
+  # Difference in angle between last segment and hypotenuse (first to last point)
+  cornerStats[[i]]$totdiff2 <- atan2(sin(totang2-angle[length(angle)]+pi),cos(totang2-angle[length(angle)]+pi))/pi*180
+  # Difference in angle between first segment and last segment
+  cornerStats[[i]]$segdiff <- atan2(sin(angle[length(angle)]-angle[1]), cos(angle[length(angle)]-angle[1]))/pi*180
+}
+
+isCorner <- vector("logical", len_json)
+for (i in 1:len_json){
+  if (is.null(cornerStats[[i]])) {next}
+  # if mostly straight, skip
+  if (abs(cornerStats[[i]]$totdiff1) < 20 || abs(cornerStats[[i]]$totdiff2) < 20) {next}
+  # if first and last segment have more than 60 degrees diff, mark as corner
+  if (abs(cornerStats[[i]]$segdiff) >= 60) {isCorner[i] <- TRUE}
+}
+
+# Extract front edge for corner lot
+# At some point, figure out how to read in roadway network. For now, arbitrarily choose one side and figure out cutoff point
+for (i in 1:len_json){
+  if (isCorner[i]){  # Only modify if it is marked as a corner parcel
+    avg <- cornerStats[[i]]$avg
+    angles <- cornerStats[[i]]$angles
+    index <- 1       # Identify index for cutoff
+    if (angles[1] > avg){
+      while(angles[index] > avg){
+        index <- index + 1
+      }
+    } else if (angles[1] <= avg){
+      while(angles[index] < avg){
+        index <- index + 1
+      }
+    }
+    parcelFront[[i]] <- parcelFront[[i]][1:index,]
+  }
+}
 
 
 
