@@ -318,7 +318,223 @@ for (i in 1:len_json){
 }
 
 
+# Function
+# ID parcel sides (front, side, back)
+# Front edges are in between front points
+# Back edge is furthest away (true distance) from front centroid
+# If edges somehow tie, select edge that has smallest angle difference
+# If 2 edges somehow tie, select randomly between edges. Or if more than two edges, furthest perpendicular distance?
+# Inputs: parcel_data, parcelFront, indexFront
+# Outputs: string vector that returns "front/side/rear" for each corresponding edge. 
+# Edge 1 = point1 to point2, edge 2 = point2 to point3, etc. Length of vector is length(parcel_data) - 1.
+idEdges <- function(par, indF){
+  edges <- indF
+  print(edges)
+  # sides[(sides[])] <- "Front"
+  # Find average of front
+  centF <- colMeans(par[indF[],])
+  # Find furthest edge (using midpoint)
+  maxDist <- 0
+  maxInd <- NULL
+  for (i in 1:(dim(par)[1]-1)){
+    if (!indF[i]){       # Test only if not a front edge
+      edge <- (par[i,] + par[i + 1, ]) / 2
+      dist2 <- (edge[1]-centF[1])*(edge[1]-centF[1]) + (edge[2]-centF[2])*(edge[2]-centF[2])
+      # Case 1: further distance, assign new furthest edge
+      if (dist2 > maxDist){
+        maxDist <- dist2
+        maxInd <- i
+      }
+      # Case 2: distance matches, keep all furthest edges
+      else if (dist2 == maxDist){
+        maxInd <- c(maxInd, i)
+      }
+      # Case 3: distance is shorter. Keep moving.
+    }
+  }
+  print(maxInd)
+  edges[(edges[])] <- "Front"
+  edges[maxInd] <- "Rear"
+  # Anything not yet marked is a side edge
+  edges[(edges[] == "FALSE")] <- "Side"
+  return(edges)
+}
 
+
+# Cut out front yard
+# Input: parcel_data, building_data, parcelFront
+# Use first and last front edge points to draw a line
+# Find point or edge on building that is closest (perpendicular distance)
+# Find line equation for front edge of building, then find intersection points on parcel
+# Output: new parcel coordinates, array (n by 2)
+################### Need to incorporate merge_rings to cut out bldg footprint
+removeFront <- function(par, bldg, front){
+  p_i <- front[1,]
+  p_f <- front[dim(front)[1],]
+  minIndex <- 0   # track index for closest point to line
+  minDist <- 1e99 # track associated minimum distance
+  for (i in 1:dim(bldg)[1]){
+    dist <- perpDist(bldg[i,1], bldg[i,2], p_i[1], p_i[2], p_f[1], p_f[2])
+    if (dist < minDist){
+      minIndex <- i
+      minDist <- dist
+    }
+  }
+  print(minIndex)
+  print(minDist)
+  # Find parallel line
+  ang <- atan2((p_f-p_i)[2],(p_f-p_i)[1])/pi*180
+  pt <- bldg[minIndex,]
+  print(ang)
+  print(pt)
+  # For each line of the parcel, check if intersects with front cut line
+  # Store (1) index of parcel side and (2) intersection point on parcel
+  # Usually will be two intersections, but may be more if unusual shape
+  parcelIndex <- vector("double")
+  parcelPoints <- array(dim = c(0,2))
+  for (i in 1:(dim(par)[1]-1)){
+    p1 <- par[i,]
+    p2 <- par[i+1,]
+    if (!is.null(checkIntersect(p1,p2,pt,ang))){
+      print(i)
+      parcelIndex <- c(parcelIndex,i)
+      parcelPoints <- rbind(parcelPoints,checkIntersect(p1,p2,pt,ang))
+    }
+  }
+  print(parcelIndex)
+  ##################################################################### Normal case: two intersection points
+  if (length(parcelIndex) == 2){
+    opt1 <- array(dim=c(20,2))
+    opt2 <- array(dim=c(20,2))
+    A <- parcelIndex[1]
+    B <- parcelIndex[2]
+    # Option 1: loop from lower index (A) to higher index (B)
+    opt1[1,] <- parcelPoints[1,]    # point A
+    index <- 2
+    for (i in (A+1):B){
+      opt1[index,] <- par[i,]
+      index <- index + 1
+    }
+    opt1[index,] <- parcelPoints[2,] # point B
+    index <- index + 1
+    opt1[index,] <- parcelPoints[1,]  # back to point A
+    opt1 <- opt1[which(rowSums(opt1)>0),]
+    opt1 <- unique(opt1)
+    opt1 <- rbind(opt1, opt1[1,])
+    # Option 2: loop from higher index (B) back to lower index (A)
+    opt2[1,] <- parcelPoints[2,] # point B
+    index <- 2
+    i <- B + 1
+    if (i > dim(par)[1]){   # If B is the last index, adjust i to 1
+      i <- 1
+    }
+    while (i != A){
+      opt2[index,] <- par[i,]
+      i <- i + 1
+      if (i > dim(par)[1]){
+        i <- 1
+      }
+    }
+    opt2[index,] <- parcelPoints[1,] # point A
+    index <- index + 1
+    opt2[index,] <- parcelPoints[2,] # point B
+    opt2 <- opt2[which(rowSums(opt2)>0),]
+    opt2 <- unique(opt2)
+    opt2 <- rbind(opt2, opt2[1,])
+    # Check if option 1 goes through front
+    for (i in 1:dim(opt1)[1]){
+      # if (isFront1(opt1[i,])){   
+      #   return (opt2)
+      # }
+      for (j in 1:dim(front)[1]){
+        if (isTRUE(all.equal(opt1[i,],front[j,]))){  # If any point is on the front, return option 2
+          return (opt2)
+        }
+      }
+    }
+    return (opt1)
+  }
+  # Other cases: deal with later
+  else {print("Abnormal number of intersections")}
+}
+
+# Helper function: shortest distance between a point and a line segment
+# (x,y) is the point, (x1,y2) and (x2,y2) make the line segment
+# https://stackoverflow.com/a/6853926
+perpDist <- function(x, y, x1, y1, x2, y2){
+  A <- x - x1
+  B <- y - y1
+  C <- x2 - x1
+  D <- y2 - y1
+  dot <- A * C + B * D
+  len_sq <- C * C + D * D
+  param <- -1
+  if (len_sq != 0){  # in case of 0 length line
+    param <- dot / len_sq
+  }
+  xx <- 0
+  yy <- 0
+  if (param < 0){
+    xx <- x2
+    yy <- y1
+  }
+  else if (param > 1){
+    xx <- x2
+    yy <- y2
+  }
+  else{
+    xx = x1 + param * C
+    yy = y1 + param * D
+  }
+  dx <- x - xx
+  dy <- y - yy
+  return (sqrt(dx * dx + dy * dy))
+}
+
+# Check if 2 line segments intersect (line 1 made by point and angle) (line 2 made by two points)
+# Input: point 1 of line segment, point 2 of line segment, point of line, angle of line
+# Input: p1, p2, pt are vectors (length 2), ang is in degrees
+# Output: returns true/false
+# https://stackoverflow.com/a/565282/68063
+checkIntersect <- function(p1, p2, pt, ang) {
+  q <- p1
+  s <- p2 - p1
+  # if (s[1]*s[1]+s[2]*s[2] < 1e-5) {return (FALSE)} # if two points are too close together,
+  p <- pt
+  r <- c(cos(ang / 180 * pi), sin(ang / 180 * pi))
+  if (crossprod2D(r, s) == 0) {
+    # lines are parallel and do not intersect
+    return(NULL)
+  }
+  t <- crossprod2D((q - p), s) / crossprod2D(r, s)
+  u <- crossprod2D((q - p), r) / crossprod2D(r, s)
+  if (u <= 1 && u >= 0) {
+    return(p + t * r)
+  }
+  else
+    return(NULL)
+}
+
+# Helper Function: finds cross product for two vectors
+crossprod2D <- function(u, v){
+  return(u[1]*v[2]-u[2]*v[1])
+}
+
+
+# Side and rear buffers
+# Input: parcel_data
+# Param: side buffer dist, rear buffer dist
+# Draw perpendicular lines that are [buffer dist] away from each side
+# Select perpendicular lines that are closer to parcel centroid, so lines are going inward, not outward
+# Find intersection between adjacent lines to reconstruct buffered parcel
+# Check whether buffer overlaps with building. If it does, adjust so that there is no intersection in result
+# Output: new parcel coordinates, array (n by 2)
+
+# 
+
+
+
+# Find which parcels are landlocked. These will need front edges manually identified
 landlocked <- vector("logical", len_json - sum(checkFront))
 index <- 1
 for (i in 1:len_json){
