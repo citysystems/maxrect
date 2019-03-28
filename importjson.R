@@ -329,7 +329,7 @@ for (i in 1:len_json){
 # Edge 1 = point1 to point2, edge 2 = point2 to point3, etc. Length of vector is length(parcel_data) - 1.
 idEdges <- function(par, indF){
   edges <- indF
-  print(edges)
+  # print(edges)
   # sides[(sides[])] <- "Front"
   # Find average of front
   centF <- colMeans(par[indF[],])
@@ -352,7 +352,7 @@ idEdges <- function(par, indF){
       # Case 3: distance is shorter. Keep moving.
     }
   }
-  print(maxInd)
+  # print(maxInd)
   edges[(edges[])] <- "Front"
   edges[maxInd] <- "Rear"
   # Anything not yet marked is a side edge
@@ -365,8 +365,8 @@ idEdges <- function(par, indF){
 # Input: parcel_data, building_data, parcelFront
 # Use first and last front edge points to draw a line
 # Find point or edge on building that is closest (perpendicular distance)
-# Find line equation for front edge of building, then find intersection points on parcel
-# Output: new parcel coordinates, array (n by 2)
+# Find line equation for front edge of building, XXXX then find intersection points on parcel
+# Output: point and vector for front cut XXX new parcel coordinates, array (n by 2)
 ################### Need to incorporate merge_rings to cut out bldg footprint
 removeFront <- function(par, bldg, front){
   p_i <- front[1,]
@@ -380,82 +380,84 @@ removeFront <- function(par, bldg, front){
       minDist <- dist
     }
   }
-  print(minIndex)
-  print(minDist)
+  # print(minIndex)
+  # print(minDist)
   # Find parallel line
-  ang <- atan2((p_f-p_i)[2],(p_f-p_i)[1])/pi*180
+  ang <- atan2((p_f-p_i)[2],(p_f-p_i)[1])
   pt <- bldg[minIndex,]
-  print(ang)
-  print(pt)
-  # For each line of the parcel, check if intersects with front cut line
-  # Store (1) index of parcel side and (2) intersection point on parcel
-  # Usually will be two intersections, but may be more if unusual shape
-  parcelIndex <- vector("double")
-  parcelPoints <- array(dim = c(0,2))
-  for (i in 1:(dim(par)[1]-1)){
-    p1 <- par[i,]
-    p2 <- par[i+1,]
-    if (!is.null(checkIntersect(p1,p2,pt,ang))){
-      print(i)
-      parcelIndex <- c(parcelIndex,i)
-      parcelPoints <- rbind(parcelPoints,checkIntersect(p1,p2,pt,ang))
-    }
-  }
-  print(parcelIndex)
-  ##################################################################### Normal case: two intersection points
-  if (length(parcelIndex) == 2){
-    opt1 <- array(dim=c(20,2))
-    opt2 <- array(dim=c(20,2))
-    A <- parcelIndex[1]
-    B <- parcelIndex[2]
-    # Option 1: loop from lower index (A) to higher index (B)
-    opt1[1,] <- parcelPoints[1,]    # point A
-    index <- 2
-    for (i in (A+1):B){
-      opt1[index,] <- par[i,]
-      index <- index + 1
-    }
-    opt1[index,] <- parcelPoints[2,] # point B
-    index <- index + 1
-    opt1[index,] <- parcelPoints[1,]  # back to point A
-    opt1 <- opt1[which(rowSums(opt1)>0),]
-    opt1 <- unique(opt1)
-    opt1 <- rbind(opt1, opt1[1,])
-    # Option 2: loop from higher index (B) back to lower index (A)
-    opt2[1,] <- parcelPoints[2,] # point B
-    index <- 2
-    i <- B + 1
-    if (i > dim(par)[1]){   # If B is the last index, adjust i to 1
-      i <- 1
-    }
-    while (i != A){
-      opt2[index,] <- par[i,]
-      i <- i + 1
-      if (i > dim(par)[1]){
-        i <- 1
-      }
-    }
-    opt2[index,] <- parcelPoints[1,] # point A
-    index <- index + 1
-    opt2[index,] <- parcelPoints[2,] # point B
-    opt2 <- opt2[which(rowSums(opt2)>0),]
-    opt2 <- unique(opt2)
-    opt2 <- rbind(opt2, opt2[1,])
-    # Check if option 1 goes through front
-    for (i in 1:dim(opt1)[1]){
-      # if (isFront1(opt1[i,])){   
-      #   return (opt2)
-      # }
-      for (j in 1:dim(front)[1]){
-        if (isTRUE(all.equal(opt1[i,],front[j,]))){  # If any point is on the front, return option 2
-          return (opt2)
-        }
-      }
-    }
-    return (opt1)
-  }
-  # Other cases: deal with later
-  else {print("Abnormal number of intersections")}
+  r_ang <- c(cos(ang),sin(ang))
+  return (c(pt, r_ang))
+  
+  #### NOT USED ANYMORE
+  # # For each line of the parcel, check if intersects with front cut line
+  # # Store (1) index of parcel side and (2) intersection point on parcel
+  # # Usually will be two intersections, but may be more if unusual shape
+  # parcelIndex <- vector("double")
+  # parcelPoints <- array(dim = c(0,2))
+  # for (i in 1:(dim(par)[1]-1)){
+  #   p1 <- par[i,]
+  #   p2 <- par[i+1,]
+  #   if (!is.null(checkIntersect(p1,p2,pt,ang))){
+  #     print(i)
+  #     parcelIndex <- c(parcelIndex,i)
+  #     parcelPoints <- rbind(parcelPoints,checkIntersect(p1,p2,pt,ang))
+  #   }
+  # }
+  # print(parcelIndex)
+  # # Normal case: two intersection points
+  # if (length(parcelIndex) == 2){
+  #   opt1 <- array(dim=c(20,2))
+  #   opt2 <- array(dim=c(20,2))
+  #   A <- parcelIndex[1]
+  #   B <- parcelIndex[2]
+  #   # Option 1: loop from lower index (A) to higher index (B)
+  #   opt1[1,] <- parcelPoints[1,]    # point A
+  #   index <- 2
+  #   for (i in (A+1):B){
+  #     opt1[index,] <- par[i,]
+  #     index <- index + 1
+  #   }
+  #   opt1[index,] <- parcelPoints[2,] # point B
+  #   index <- index + 1
+  #   opt1[index,] <- parcelPoints[1,]  # back to point A
+  #   opt1 <- opt1[which(rowSums(opt1)>0),]
+  #   opt1 <- unique(opt1)
+  #   opt1 <- rbind(opt1, opt1[1,])
+  #   # Option 2: loop from higher index (B) back to lower index (A)
+  #   opt2[1,] <- parcelPoints[2,] # point B
+  #   index <- 2
+  #   i <- B + 1
+  #   if (i > dim(par)[1]){   # If B is the last index, adjust i to 1
+  #     i <- 1
+  #   }
+  #   while (i != A){
+  #     opt2[index,] <- par[i,]
+  #     i <- i + 1
+  #     if (i > dim(par)[1]){
+  #       i <- 1
+  #     }
+  #   }
+  #   opt2[index,] <- parcelPoints[1,] # point A
+  #   index <- index + 1
+  #   opt2[index,] <- parcelPoints[2,] # point B
+  #   opt2 <- opt2[which(rowSums(opt2)>0),]
+  #   opt2 <- unique(opt2)
+  #   opt2 <- rbind(opt2, opt2[1,])
+  #   # Check if option 1 goes through front
+  #   for (i in 1:dim(opt1)[1]){
+  #     # if (isFront1(opt1[i,])){   
+  #     #   return (opt2)
+  #     # }
+  #     for (j in 1:dim(front)[1]){
+  #       if (isTRUE(all.equal(opt1[i,],front[j,]))){  # If any point is on the front, return option 2
+  #         return (opt2)
+  #       }
+  #     }
+  #   }
+  #   return (opt1)
+  # }
+  # # Other cases: deal with later
+  # else {print("Abnormal number of intersections")}
 }
 
 # Helper function: shortest distance between a point and a line segment
@@ -515,6 +517,28 @@ checkIntersect <- function(p1, p2, pt, ang) {
     return(NULL)
 }
 
+# Check if 2 lines intersect (each one consists of (x1, y1, r_x, r_y))
+# Input: line1, line2 (length 4 vector)
+# Output: returns true/false
+# https://stackoverflow.com/a/565282/68063
+intersectLines <- function(line1, line2) {
+  p <- c(line1[1],line1[2])
+  r <- c(line1[3],line1[4])
+  q <- c(line2[1],line2[2])
+  s <- c(line2[3],line2[4])
+  
+  
+  # if (s[1]*s[1]+s[2]*s[2] < 1e-5) {return (FALSE)} # if two points are too close together,
+  if (crossprod2D(r, s) == 0) {
+    # lines are parallel and do not intersect
+    return(NULL)
+  }
+  t <- crossprod2D((q - p), s) / crossprod2D(r, s)
+  u <- crossprod2D((q - p), r) / crossprod2D(r, s)
+  return(p + t * r)
+}
+
+
 # Helper Function: finds cross product for two vectors
 crossprod2D <- function(u, v){
   return(u[1]*v[2]-u[2]*v[1])
@@ -522,15 +546,75 @@ crossprod2D <- function(u, v){
 
 
 # Side and rear buffers
-# Input: parcel_data
+# Input: parcel_data, edgeID (front, side, rear), building footprint, front points
 # Param: side buffer dist, rear buffer dist
-# Draw perpendicular lines that are [buffer dist] away from each side
-# Select perpendicular lines that are closer to parcel centroid, so lines are going inward, not outward
+# Draw parallel lines that are [buffer dist] away from each side
+# Select parallel lines that are closer to parcel centroid, so lines are going inward, not outward
 # Find intersection between adjacent lines to reconstruct buffered parcel
 # Check whether buffer overlaps with building. If it does, adjust so that there is no intersection in result
 # Output: new parcel coordinates, array (n by 2)
+allBuffers <- function(par, edges, bldg, front, side_dist, rear_dist){
+  buffers <- array(dim = c(0, 4))
+  skipFront <- FALSE               # Keep track of whether front cut was already added. If so, skip other front edges
+  # Find the lines for all the buffers
+  for (i in 1:length(edges)){
+    if (edges[i] == "Front"){
+      if (skipFront){
+        next
+      }
+      else{
+        buffers <- rbind(buffers, removeFront(par, bldg, front))
+        skipFront <- TRUE
+      }
+    }
+    else if (edges[i] == "Side"){
+      buffers <- rbind(buffers, buffer(par, i, side_dist))
+    }
+    else if (edges[i] == "Rear"){
+      buffers <- rbind(buffers, buffer(par, i, rear_dist))
+    }
+  }
+  buffers <- rbind(buffers, buffers[1,])      # Wrap around for easier looping later
+  newPar <- array(dim = c((length(edges)+1), 2))
+  for (i in 1:length(edges)){
+    newPar[i,] <- intersectLines(buffers[i,],buffers[i+1,])
+  }
+  newPar[length(edges)+1,] <- newPar[1,]
+  return (newPar)
+}
 
-# 
+
+
+# Helper Function: buffer for one edge
+# Input: parcel_data
+# Param: edge_index, buffer distance
+# Draw two points [buffer dist] perpendicular from edge midpoint, choose the point that is inside polygon
+# Draws parallel line that [buffer dist] away from the edge
+# Returns a line for the edge (u + param * angle vector r) as a vector length 4 (ux, uy, rx, ry)
+buffer <- function(par, ind, dist){
+  edge <- par[ind:(ind+1),]      # index and next point
+  # print(edge)
+  edge_mp <- colMeans(edge)      # Edge midpoint
+  # print(edge_mp)
+  edge_ang <- atan2(par[ind+1,2]-par[ind,2], par[ind+1,1]-par[ind,1])
+  # print(edge_ang)
+  offset <- dist * c(cos(edge_ang + pi/2), sin(edge_ang + pi/2))
+  # print(offset)
+  opt1 <- edge_mp + offset
+  # print(opt1)
+  opt2 <- edge_mp - offset
+  # print(opt2)
+  if (point.in.polygon(opt1[1],opt1[2],par[,1],par[,2]) == 1){ # If opt1 is inside polygon
+    vec <- c(cos(edge_ang), sin(edge_ang))
+    return (c(opt1, vec))    
+  } else if (point.in.polygon(opt2[1],opt2[2],par[,1],par[,2]) == 1){ # If opt2 is inside polygon
+    vec <- c(cos(edge_ang), sin(edge_ang))
+    return (c(opt2, vec))
+  } else{
+    print("Buffer does not work for this polygon")
+  }
+}
+
 
 
 
