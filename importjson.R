@@ -16,6 +16,14 @@ apn_file <- "apn.csv"
 apn <- read_csv(apn_file)
 apn <- paste( "0", apn$apn, sep = "")
 full_json_data <- dplyr::filter(full_json_data, APN %in% apn)
+
+### parcels and their streets
+street_file <- "apn_street.csv"
+street <- read_csv(street_file)
+street$apn <- paste0( "0", street$apn)
+full_json_data <- full_json_data %>% inner_join(street, by = c("APN" = "apn"))
+
+
 # Pull polygons
 json_data <- full_json_data$json_geometry.coordinates
 len_json <- length(json_data)
@@ -40,6 +48,21 @@ parcels <- fromJSON(txt=parcel_file, flatten = TRUE, simplifyDataFrame = TRUE)
 parcels <- parcels$features
 parcels <- dplyr::filter(parcels, properties.APN %in% full_json_data$APN)
 parcel_data <- parcels$geometry.coordinates
+
+
+### roads
+roads_file <- "epa_roads_adj.geojson"
+roads <- fromJSON(txt=roads_file, flatten = TRUE, simplifyDataFram = TRUE)
+roads <- roads$features
+
+test <- full_json_data$address
+test <- cbind(test, toupper(test) %in% toupper(roads$properties.FULLNAME))
+
+# Initialize column for storing road segments
+full_json_data[,"list_roads"] <- NA
+for (i in 1:dim(full_json_data)[1]){
+  full_json_data$list_roads[i] <- list(roads %>% filter(properties.FULLNAME == test$address[i]))
+}
 
 
 ### coordinates of front
@@ -266,9 +289,10 @@ for (i in 1:len_json){
 # Identify corner lots
 cornerStats <- vector(mode = "list", len_json)
 for (i in 1:len_json){
-  if(is.null(parcelFront[[i]])) {next}
-  else if (dim(parcelFront[[i]])[1] < 3) {next}
-  arr <- parcelFront[[i]]
+  if(is.null(parcelFront[[i]])) {next}              # Skip landlocked
+  else if (dim(parcelFront[[i]])[1] < 3) {next}     # Skip parcels with 1 or 2 front points (most likly not a corner)
+  arr <- parcelFront[[i]]                           # Get the front points
+  
   # Find angles
   angle <- vector(mode = "double", length = dim(arr)[1]-1)
   for (j in 1:length(angle)){
@@ -277,15 +301,15 @@ for (i in 1:len_json){
   totang1 <- atan2(arr[dim(arr)[1],2]-arr[1,2], arr[dim(arr)[1],1]-arr[1,1])
   totang2 <- totang1 - pi
   # Save angles
-  cornerStats[[i]]$angles <- angle/pi*180
+  cornerStats[[i]]$angles <- angle
   # Average angle
-  cornerStats[[i]]$avg <- mean(angle)/pi*180
+  cornerStats[[i]]$avg <- mean(angle)
   # Difference in angle between first segment and hypotenuse (first to last point)
-  cornerStats[[i]]$totdiff1 <- atan2(sin(totang1-angle[1]),cos(totang1-angle[1]))/pi*180
+  cornerStats[[i]]$totdiff1 <- atan2(sin(totang1-angle[1]),cos(totang1-angle[1]))
   # Difference in angle between last segment and hypotenuse (first to last point)
-  cornerStats[[i]]$totdiff2 <- atan2(sin(totang2-angle[length(angle)]+pi),cos(totang2-angle[length(angle)]+pi))/pi*180
+  cornerStats[[i]]$totdiff2 <- atan2(sin(totang2-angle[length(angle)]+pi),cos(totang2-angle[length(angle)]+pi))
   # Difference in angle between first segment and last segment
-  cornerStats[[i]]$segdiff <- atan2(sin(angle[length(angle)]-angle[1]), cos(angle[length(angle)]-angle[1]))/pi*180
+  cornerStats[[i]]$segdiff <- atan2(sin(angle[length(angle)]-angle[1]), cos(angle[length(angle)]-angle[1]))
 }
 
 isCorner <- vector("logical", len_json)
@@ -301,19 +325,59 @@ for (i in 1:len_json){
 # At some point, figure out how to read in roadway network. For now, arbitrarily choose one side and figure out cutoff point
 for (i in 1:len_json){
   if (isCorner[i]){  # Only modify if it is marked as a corner parcel
-    avg <- cornerStats[[i]]$avg
-    angles <- cornerStats[[i]]$angles
-    index <- 1       # Identify index for cutoff
-    if (angles[1] > avg){
-      while(angles[index] > avg){
-        index <- index + 1
-      }
-    } else if (angles[1] <= avg){
-      while(angles[index] < avg){
-        index <- index + 1
+    par_cent <- colMeans(drop(parcel_data[[i]]))      # Get the parcel centroid
+    # Extract associated road
+    roads <- full_json_data$list_roads[[i]]$geometry.coordinates     # Get the list
+    # Find two closest points on roadway network to parcel centroid
+    minDist1 <- 1e99
+    minDist2 <- 1e99
+    point1 <- vector(length = 2)
+    point2 <- vector(length = 2)
+    for (j in 1:length(roads)){
+      road_arr <- drop(roads[[j]])
+      for (k in 1:dim(road_arr)[1]){
+        dist <- sqrt((par_cent[1]-road_arr[k,1])^2 + (par_cent[2]-road_arr[k,1])^2)
+        if (dist < minDist1){
+          point2 <- point1
+          minDist2 <- minDist1
+          point1 <- road_arr[k,]
+          minDist1 <- dist
+        }
       }
     }
-    parcelFront[[i]] <- parcelFront[[i]][1:index,]
+    # We now have the angle of the roadway
+    road_ang <- atan2(point2[2]-point1[2],point2[1]-point1[1])/pi*180
+    
+    # avg <- cornerStats[[i]]$avg
+    angles <- cornerStats[[i]]$angles
+    delta <- angles - road_ang          # find the difference for all the angles
+    
+    # Identify index range for front
+    start <- 0
+    finish <- 1
+    
+    for (j in 1:length(delta)){
+      if (abs(sin(delta)) < 0.5){       # Smallest angle difference is 30 degrees
+        if (start == 0){
+          start <- i
+        }
+      } else{
+        if (start > 0){
+          finish <- i - 1
+        }
+      }
+    }
+    
+    # if (angles[1] > avg){
+    #   while(angles[index] > avg){
+    #     index <- index + 1
+    #   }
+    # } else if (angles[1] <= avg){
+    #   while(angles[index] < avg){
+    #     index <- index + 1
+    #   }
+    # }
+    parcelFront[[i]] <- parcelFront[[i]][start:finish,]
   }
 }
 
