@@ -55,13 +55,14 @@ roads_file <- "epa_roads_adj.geojson"
 roads <- fromJSON(txt=roads_file, flatten = TRUE, simplifyDataFram = TRUE)
 roads <- roads$features
 
-test <- full_json_data$address
-test <- cbind(test, toupper(test) %in% toupper(roads$properties.FULLNAME))
+match_street <- toupper(match_street) %in% toupper(roads$properties.FULLNAME)
+
+
 
 # Initialize column for storing road segments
 full_json_data[,"list_roads"] <- NA
 for (i in 1:dim(full_json_data)[1]){
-  full_json_data$list_roads[i] <- list(roads %>% filter(properties.FULLNAME == test$address[i]))
+  full_json_data$list_roads[i] <- list(roads %>% filter(toupper(properties.FULLNAME) == toupper(full_json_data$address[[i]])))
 }
 
 
@@ -245,6 +246,7 @@ View(cbind(chunks2, false_chunks2))
 
 # Extract parcel front points
 parcelFront <- vector(mode = "list", len_json)     # Keep track of the points that touch the front
+# for (i in 1:len_json){
 for (i in 1:len_json){
   if (checkFront[i]){   # Check whether we need to save any points
     parcelFront[[i]] <- array(dim = c(numFront[i],2))
@@ -316,15 +318,21 @@ isCorner <- vector("logical", len_json)
 for (i in 1:len_json){
   if (is.null(cornerStats[[i]])) {next}
   # if mostly straight, skip
-  if (abs(cornerStats[[i]]$totdiff1) < 20 || abs(cornerStats[[i]]$totdiff2) < 20) {next}
+  if (abs(cornerStats[[i]]$totdiff1) < (20/180*pi) || abs(cornerStats[[i]]$totdiff2) < (20/180*pi)) {next}
   # if first and last segment have more than 60 degrees diff, mark as corner
-  if (abs(cornerStats[[i]]$segdiff) >= 60) {isCorner[i] <- TRUE}
+  if (abs(cornerStats[[i]]$segdiff) >= (60/180*pi)) {isCorner[i] <- TRUE}
 }
 
 # Extract front edge for corner lot
-# At some point, figure out how to read in roadway network. For now, arbitrarily choose one side and figure out cutoff point
+# Read in roadway network. Find two closest roadway points to parcel
+# Find edges within X degrees of parallel to roadway
+# For cases where there are more than 2 "chunks" near parallel, find chunk that is closest to roadway
+chunks <- vector("double", len_json)              # chunks of edges near parallel to road
+false_chunks <- vector("double", len_json)        # chunks of edges not near parallel to road
+modParcelFront <- parcelFront
 for (i in 1:len_json){
   if (isCorner[i]){  # Only modify if it is marked as a corner parcel
+    print(i)
     par_cent <- colMeans(drop(parcel_data[[i]]))      # Get the parcel centroid
     # Extract associated road
     roads <- full_json_data$list_roads[[i]]$geometry.coordinates     # Get the list
@@ -333,51 +341,97 @@ for (i in 1:len_json){
     minDist2 <- 1e99
     point1 <- vector(length = 2)
     point2 <- vector(length = 2)
+    road_arr <- array(dim = c(0,2))
     for (j in 1:length(roads)){
-      road_arr <- drop(roads[[j]])
-      for (k in 1:dim(road_arr)[1]){
-        dist <- sqrt((par_cent[1]-road_arr[k,1])^2 + (par_cent[2]-road_arr[k,1])^2)
-        if (dist < minDist1){
-          point2 <- point1
-          minDist2 <- minDist1
-          point1 <- road_arr[k,]
-          minDist1 <- dist
+      if (typeof(roads[[j]]) == "list"){
+        for (k in 1:length(roads[[j]])){
+          road_arr <- rbind(road_arr, drop(roads[[j]][[k]]))
         }
+      } else{
+        road_arr <- rbind(road_arr, drop(roads[[j]]))
+      }
+    }
+    road_arr <- unique(road_arr)
+      
+    for (j in 1:dim(road_arr)[1]){
+      dist <- sqrt((par_cent[1]-road_arr[j,1])^2 + (par_cent[2]-road_arr[j,1])^2)
+      if (dist < minDist1){
+        point2 <- point1
+        minDist2 <- minDist1
+        point1 <- road_arr[j,]
+        minDist1 <- dist
       }
     }
     # We now have the angle of the roadway
-    road_ang <- atan2(point2[2]-point1[2],point2[1]-point1[1])/pi*180
+    road_ang <- atan2(point2[2]-point1[2],point2[1]-point1[1])
+    print(road_ang)
     
-    # avg <- cornerStats[[i]]$avg
+    # Find edges within X degrees of parallel to roadway
     angles <- cornerStats[[i]]$angles
-    delta <- angles - road_ang          # find the difference for all the angles
+    nearParallel <- (abs(sin(angles - road_ang)) < sqrt(2)/2)
+    print(nearParallel)
     
-    # Identify index range for front
-    start <- 0
-    finish <- 1
-    
-    for (j in 1:length(delta)){
-      if (abs(sin(delta)) < 0.5){       # Smallest angle difference is 30 degrees
-        if (start == 0){
-          start <- i
+    # Check if there are more than one "chunk" (of consecutive edges) that is near parallel
+    preVal <- FALSE
+    chunkInd <- vector()
+    for (j in 1:length(nearParallel)){
+      if (j == 1 && nearParallel[j]){
+        chunks[i] <- chunks[i] + 1
+        chunkInd <- c(chunkInd, j)
         }
-      } else{
-        if (start > 0){
-          finish <- i - 1
+      else if (j == 1 && nearParallel[j] == FALSE){false_chunks[i] <- false_chunks[i] + 1}
+      else if (preVal == FALSE && nearParallel[j]){
+        chunks[i] <- chunks[i] + 1
+        chunkInd <- c(chunkInd, j)
         }
-      }
+      else if (preVal && nearParallel[j] == FALSE){
+        false_chunks[i] <- false_chunks[i] + 1
+        chunkInd <- c(chunkInd, j - 1)
+        }
+      preVal <- nearParallel[j]
+    }
+    if (preVal == TRUE){
+      chunkInd <- c(chunkInd, length(nearParallel))
     }
     
-    # if (angles[1] > avg){
-    #   while(angles[index] > avg){
-    #     index <- index + 1
-    #   }
-    # } else if (angles[1] <= avg){
-    #   while(angles[index] < avg){
-    #     index <- index + 1
-    #   }
-    # }
-    parcelFront[[i]] <- parcelFront[[i]][start:finish,]
+    # Case 1: more than one chunk
+    if (chunks[i] > 1){
+      chunkCent <- array(dim = c(chunks[i],2)) # Find centroid of each chunk
+      perpDistCent <- vector(length = chunks[i])
+      for (j in 1:chunks[i]){
+        start <- chunkInd[2*j-1]
+        finish <- chunkInd[2*j]
+        if (start == finish){
+          chunkCent[j,] <- parcelFront[[i]][start,]
+        } else{
+          chunkCent[j,] <- colMeans(parcelFront[[i]][start:finish,])
+        }
+        perpDistCent[j] <- perpDist(chunkCent[j,1],chunkCent[j,2],point1[1],point1[2],point2[1],point2[2])
+      }
+      # Find which chunk is the shortest perpendicular dist from roadway
+      chunkNum <- which(perpDistCent == min(perpDistCent))[1]
+      start <- chunkInd[2*chunkNum-1]
+      finish <- chunkInd[2*chunkNum]
+      print(paste("Start = ", start, "Finish = ", finish))
+      modParcelFront[[i]] <- parcelFront[[i]][start:(finish+1),]
+    }
+    # Case 2: one chunk. Just return that
+    else{
+      start <- chunkInd[1]
+      finish <- chunkInd[2]
+      print(paste("Start = ", start, "Finish = ", finish))
+      modParcelFront[[i]] <- parcelFront[[i]][start:(finish+1),]
+    }
+  }
+}
+
+# Check if the modified parcel fronts are good
+for (i in 1:len_json){
+  if (isCorner[i]){
+    eqscplot(json_data[[i]],type='l')
+    points(modParcelFront[[i]])
+    Sys.sleep(0.1)  # Pause and continues automatically
+    # invisible(readline(prompt="Press [enter] to continue"))  # Manually press enter to continue
   }
 }
 
