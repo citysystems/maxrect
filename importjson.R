@@ -6,6 +6,10 @@ library(readr)
 library(MASS)
 library(sp)
 library(dplyr)
+library(ggplot2)
+
+# To save current environment
+save.image(".RData")
 
 
 ### parcels minus building footprint
@@ -23,6 +27,10 @@ street <- read_csv(street_file)
 street$apn <- paste0( "0", street$apn)
 full_json_data <- full_json_data %>% inner_join(street, by = c("APN" = "apn"))
 
+### sort by APN increasing
+ord <- sort.list(full_json_data$APN)
+full_json_data <- full_json_data[ord,]
+rownames(full_json_data) <- 1:nrow(full_json_data)
 
 # Pull polygons
 json_data <- full_json_data$json_geometry.coordinates
@@ -47,6 +55,9 @@ parcel_file <- "epaparcels_clean.geojson"
 parcels <- fromJSON(txt=parcel_file, flatten = TRUE, simplifyDataFrame = TRUE)
 parcels <- parcels$features
 parcels <- dplyr::filter(parcels, properties.APN %in% full_json_data$APN)
+ord <- sort.list(parcels$properties.APN)
+parcels <- parcels[ord,]
+rownames(parcels) <- 1:len_json
 parcel_data <- parcels$geometry.coordinates
 
 
@@ -57,6 +68,8 @@ roads <- roads$features
 
 match_street <- toupper(match_street) %in% toupper(roads$properties.FULLNAME)
 
+
+### Rewrite the function for checking street matching
 
 
 # Initialize column for storing road segments
@@ -75,7 +88,7 @@ json_block_points <- array(data = 0, dim = c(json_block_length, 2))
 for(i in 1:json_block_length){
   print(i)
   v <- json_block_data[[i]]
-  if(is.null(json_block_data[[i]])){next}
+  if(is.null(json_block_data[[i]]) || typeof(json_block_data[[i]]) != "double"){next}
   x <- v[1]
   y <- v[2]
   json_block_points[i,1] <- x
@@ -113,8 +126,8 @@ isFront1 <- function(point){
   index <- findInterval(point[1], json_block_points[,1])  # This index may be +/- 1 from the actual value
   if (index > 0) {index <- index - 1}                   # Move back one
   for (i in 1:3){                      # Make sure a minimum of three iterations done before stopping
-    while((index > 0) && (index <= dim(json_block_points)[1]) && (abs(point[1] - json_block_points[index,1]) <= 0.01)){         # search all coordinates w/ same X coord
-      if(abs(point[2] - json_block_points[index,2]) <= 0.01){return(TRUE)}
+    while((index > 0) && (index <= dim(json_block_points)[1]) && (abs(point[1] - json_block_points[index,1]) <= 1.5)){         # search all coordinates w/ same X coord
+      if(abs(point[2] - json_block_points[index,2]) <= 1.5){return(TRUE)}
       index <- index + 1
     }
     index <- index + 1
@@ -126,16 +139,16 @@ isFront1 <- function(point){
 # Inputs a polygon (n by 2 array)
 # Outputs a modified polygon (n by 2 array)
 removeCollinear <- function(arr){
-  angle <- vector(mode = "double", length = dim(arr)[1]-1)
-  for (j in 1:length(angle)){
-    angle[j] <- atan2(arr[j+1,2]-arr[j,2], arr[j+1,1]-arr[j,1])
+  slope <- vector(mode = "double", length = dim(arr)[1]-1)
+  for (j in 1:length(slope)){
+    slope[j] <- atan2(arr[j+1,2]-arr[j,2], arr[j+1,1]-arr[j,1])
   }
   i <- 2
-  while (i <= length(angle)){
-    if (abs(angle[i] - angle[i-1])/pi*180 < 0.5) {
+  while (i <= length(slope)){
+    if (abs(slope[i] - slope[i-1])/pi*180 < 0.5) {
       arr <- arr[-i,]
-      angle[i-1] <- (angle[i]+angle[i-1])/2
-      angle <- angle[-i]
+      slope[i-1] <- (slope[i]+slope[i-1])/2
+      slope <- slope[-i]
       i <- i - 1            # adjust index, since we removed a point
     }
     i <- i + 1              # increment index
@@ -182,10 +195,7 @@ for (i in 1:len_json){
 }
 
 sum(checkFront)
-length(numFront[numFront == 0])
-length(numFront[numFront == 1])
-length(numFront[numFront == 2])
-length(numFront[numFront > 2])
+table(numFront)
 
 
 
@@ -283,7 +293,10 @@ for (i in 1:len_json){
   print(i)
   if (is.null(parcelFront[[i]])) {next}
   if (dim(parcelFront[[i]])[1] == 1) {next}
-  else {eqscplot(parcelFront[[i]], type="l")}
+  else {
+    eqscplot(parcel_data[[i]], type="l")
+    points(parcelFront[[i]], pch = 16)
+  }   # Change it to plot the parcel and add the front points as dark circles
   Sys.sleep(0.05)  # Pause and continues automatically
   # invisible(readline(prompt="Press [enter] to continue"))  # Manually press enter to continue
 }
@@ -295,41 +308,87 @@ for (i in 1:len_json){
   else if (dim(parcelFront[[i]])[1] < 3) {next}     # Skip parcels with 1 or 2 front points (most likly not a corner)
   arr <- parcelFront[[i]]                           # Get the front points
   
-  # Find angles
-  angle <- vector(mode = "double", length = dim(arr)[1]-1)
-  for (j in 1:length(angle)){
-    angle[j] <- atan2(arr[j+1,2]-arr[j,2], arr[j+1,1]-arr[j,1])
+  # Find slopes
+  slope <- vector(mode = "double", length = dim(arr)[1]-1)
+  for (j in 1:length(slope)){
+    slope[j] <- atan2(arr[j+1,2]-arr[j,2], arr[j+1,1]-arr[j,1])
   }
-  totang1 <- atan2(arr[dim(arr)[1],2]-arr[1,2], arr[dim(arr)[1],1]-arr[1,1])
-  totang2 <- totang1 - pi
-  # Save angles
-  cornerStats[[i]]$angles <- angle
-  # Average angle
-  cornerStats[[i]]$avg <- mean(angle)
-  # Difference in angle between first segment and hypotenuse (first to last point)
-  cornerStats[[i]]$totdiff1 <- atan2(sin(totang1-angle[1]),cos(totang1-angle[1]))
-  # Difference in angle between last segment and hypotenuse (first to last point)
-  cornerStats[[i]]$totdiff2 <- atan2(sin(totang2-angle[length(angle)]+pi),cos(totang2-angle[length(angle)]+pi))
-  # Difference in angle between first segment and last segment
-  cornerStats[[i]]$segdiff <- atan2(sin(angle[length(angle)]-angle[1]), cos(angle[length(angle)]-angle[1]))
+  totslo1 <- atan2(arr[dim(arr)[1],2]-arr[1,2], arr[dim(arr)[1],1]-arr[1,1])
+  totslo2 <- totslo1 - pi
+  # Save slopes
+  cornerStats[[i]]$slopes <- slope
+  # Average slope
+  cornerStats[[i]]$avg <- mean(slope)
+  # Difference in slope between first segment and hypotenuse (first to last point)
+  cornerStats[[i]]$totdiff1 <- atan2(sin(totslo1-slope[1]),cos(totslo1-slope[1]))
+  # Difference in slope between last segment and hypotenuse (first to last point)
+  cornerStats[[i]]$totdiff2 <- atan2(sin(totslo2-slope[length(slope)]+pi),cos(totslo2-slope[length(slope)]+pi))
+  # Difference in slope between first segment and last segment
+  cornerStats[[i]]$segdiff <- atan2(sin(slope[length(slope)]-slope[1]), cos(slope[length(slope)]-slope[1]))
 }
+
+
+## Look at the break down of slope differences across parcels to figure out what is a good threshold
+segDiff <- array(dim = c(len_json,2))
+for (i in 1:len_json){
+  if (is.null(cornerStats[[i]])) {
+    segDiff[i,1] <- NA
+  }
+  else {
+    segDiff[i,1] <- abs(cornerStats[[i]]$segdiff)/pi*180
+  }
+}
+segDiff[,2] <- 1:len_json
+colnames(segDiff) <- c("diff", "index")
+segDiff <- na.omit(segDiff)
+
+data_frame(val = segDiff[,1]) %>% 
+  ggplot(., aes(x = val)) +
+  geom_histogram(aes(y = cumsum(..count..)/sum(..count..)), binwidth = 5) +
+  scale_x_reverse(breaks = seq(0, 180, 10), limits = c(90, 0)) +
+  scale_y_continuous(labels = scales::percent)
+
+## Look at break down of totdiff 
+totDiff <- array(dim = c(len_json,2))
+for (i in 1:len_json){
+  if (is.null(cornerStats[[i]])) {
+    totDiff[i,1] <- NA
+  }
+  else {
+    totDiff[i,1] <- abs(min(cornerStats[[i]]$totdiff1, cornerStats[[i]]$totdiff2))/pi*180
+  }
+}
+totDiff[,2] <- 1:len_json
+colnames(totDiff) <- c("totdiff", "index")
+totDiff <- na.omit(totDiff)
+
+data_frame(val = totDiff[,1]) %>% 
+  ggplot(., aes(x = val)) +
+  geom_histogram(aes(y = ..count../sum(..count..)), binwidth = 5) +
+  scale_y_continuous(labels = scales::percent) +
+  scale_x_continuous(limits = c(90, 0))
+
 
 isCorner <- vector("logical", len_json)
 for (i in 1:len_json){
   if (is.null(cornerStats[[i]])) {next}
-  # if mostly straight, skip
-  if (abs(cornerStats[[i]]$totdiff1) < (20/180*pi) || abs(cornerStats[[i]]$totdiff2) < (20/180*pi)) {next}
+  # if mostly straight, skip   *********************** try taking out this test
+  # if (abs(cornerStats[[i]]$totdiff1) < (20/180*pi) || abs(cornerStats[[i]]$totdiff2) < (20/180*pi)) {next}
   # if first and last segment have more than 60 degrees diff, mark as corner
   if (abs(cornerStats[[i]]$segdiff) >= (60/180*pi)) {isCorner[i] <- TRUE}
 }
 
+
+
 # Extract front edge for corner lot
-# Read in roadway network. Find two closest roadway points to parcel
+# Read in roadway network. Find two closest roadway points to parcel centroid
 # Find edges within X degrees of parallel to roadway
 # For cases where there are more than 2 "chunks" near parallel, find chunk that is closest to roadway
 chunks <- vector("double", len_json)              # chunks of edges near parallel to road
 false_chunks <- vector("double", len_json)        # chunks of edges not near parallel to road
 modParcelFront <- parcelFront
+roadway <- vector("list", len_json)
+closestRoad <- vector("list", len_json)
 for (i in 1:len_json){
   if (isCorner[i]){  # Only modify if it is marked as a corner parcel
     print(i)
@@ -352,23 +411,26 @@ for (i in 1:len_json){
       }
     }
     road_arr <- unique(road_arr)
-      
+    roadway[[i]] <- road_arr
+    dist <- vector(length = dim(road_arr)[1])
     for (j in 1:dim(road_arr)[1]){
-      dist <- sqrt((par_cent[1]-road_arr[j,1])^2 + (par_cent[2]-road_arr[j,1])^2)
-      if (dist < minDist1){
-        point2 <- point1
-        minDist2 <- minDist1
-        point1 <- road_arr[j,]
-        minDist1 <- dist
-      }
+      dist[j] <- ((par_cent[1]-road_arr[j,1])/100000)^2 + ((par_cent[2]-road_arr[j,2])/100000)^2
     }
-    # We now have the angle of the roadway
-    road_ang <- atan2(point2[2]-point1[2],point2[1]-point1[1])
-    print(road_ang)
+    print(dist)
+    ord <- order(dist)
+    print(ord)
+    road_arr <- road_arr[ord,]
+    point1 <- road_arr[1,]
+    point2 <- road_arr[2,]
+    
+    closestRoad[[i]] <- rbind(point1,point2)
+    # We now have the slope of the roadway
+    road_slo <- atan2(point2[2]-point1[2],point2[1]-point1[1])
+    print(road_slo)
     
     # Find edges within X degrees of parallel to roadway
-    angles <- cornerStats[[i]]$angles
-    nearParallel <- (abs(sin(angles - road_ang)) < sqrt(2)/2)
+    slopes <- cornerStats[[i]]$slopes
+    nearParallel <- (abs(sin(slopes - road_slo)) < sqrt(2)/2)
     print(nearParallel)
     
     # Check if there are more than one "chunk" (of consecutive edges) that is near parallel
@@ -425,24 +487,39 @@ for (i in 1:len_json){
   }
 }
 
+troubleshootRoad <- function(index){
+  eqscplot(roadway[[index]], type='l')
+  points(closestRoad[[index]], pch = 19)
+  points(roadway[[index]], pch = 1)
+  lines(parcel_data[[index]])
+}
+
 # Check if the modified parcel fronts are good
 for (i in 1:len_json){
   if (isCorner[i]){
-    eqscplot(json_data[[i]],type='l')
+    print(i)
+    eqscplot(json_data[[i]],type='l', tol=0.9)
     points(modParcelFront[[i]])
-    Sys.sleep(0.1)  # Pause and continues automatically
-    # invisible(readline(prompt="Press [enter] to continue"))  # Manually press enter to continue
+    points(closestRoad[[i]])
+    lines(roadway[[i]])
+    # Sys.sleep(0.1)  # Pause and continues automatically
+    invisible(readline(prompt="Press [enter] to continue"))  # Manually press enter to continue
   }
 }
 
+# Troubleshooting
+checkCorner <- function(index){
+  eqscplot(json_data[[index]], type='l')
+  points(modParcelFront[[index]])
+}
 
 # Function
 # ID parcel sides (front, side, back)
 # Front edges are in between front points
 # Back edge is furthest away (true distance) from front centroid
-# If edges somehow tie, select edge that has smallest angle difference
+# If edges somehow tie, select edge that has smallest slope difference
 # If 2 edges somehow tie, select randomly between edges. Or if more than two edges, furthest perpendicular distance?
-# Inputs: parcel_data, parcelFront, indexFront
+# Inputs: parcel_data, indexFront
 # Outputs: string vector that returns "front/side/rear" for each corresponding edge. 
 # Edge 1 = point1 to point2, edge 2 = point2 to point3, etc. Length of vector is length(parcel_data) - 1.
 idEdges <- function(par, indF){
@@ -450,22 +527,31 @@ idEdges <- function(par, indF){
   # print(edges)
   # sides[(sides[])] <- "Front"
   # Find average of front
-  centF <- colMeans(par[indF[],])
+  if (sum(indF) == 0){
+    return (NULL)
+  }
+  else if (sum(indF) == 1){
+    centF <- par[indF[],]
+  } else{
+    centF <- colMeans(par[indF[],])
+  }
   # Find furthest edge (using midpoint)
   maxDist <- 0
   maxInd <- NULL
   for (i in 1:(dim(par)[1]-1)){
     if (!indF[i]){       # Test only if not a front edge
       edge <- (par[i,] + par[i + 1, ]) / 2
-      dist2 <- (edge[1]-centF[1])*(edge[1]-centF[1]) + (edge[2]-centF[2])*(edge[2]-centF[2])
+      dist <- (edge[1]-centF[1])*(edge[1]-centF[1]) + (edge[2]-centF[2])*(edge[2]-centF[2])
       # Case 1: further distance, assign new furthest edge
-      if (dist2 > maxDist){
-        maxDist <- dist2
+      if (dist > maxDist){
+        maxDist <- dist
         maxInd <- i
       }
-      # Case 2: distance matches, keep all furthest edges
-      else if (dist2 == maxDist){
+      # Case 2: distance matches, keep all furthest edges ###### Pick the longest edge 
+      else if (dist == maxDist){
+        print(paste("Tied! Index = ", i))
         maxInd <- c(maxInd, i)
+        
       }
       # Case 3: distance is shorter. Keep moving.
     }
@@ -478,6 +564,14 @@ idEdges <- function(par, indF){
   return(edges)
 }
 
+# Run idEdges on all parcels
+parcelEdges <- vector("list", len_json)
+for (i in 1:len_json){
+  # print(i)
+  par <- unique(parcel_data[[i]])
+  par <- rbind(par, par[1,])
+  parcelEdges[[i]] <- idEdges(par, indexFront[[i]])
+}
 
 # Cut out front yard
 # Input: parcel_data, building_data, parcelFront
@@ -501,10 +595,10 @@ removeFront <- function(par, bldg, front){
   # print(minIndex)
   # print(minDist)
   # Find parallel line
-  ang <- atan2((p_f-p_i)[2],(p_f-p_i)[1])
+  slope <- atan2((p_f-p_i)[2],(p_f-p_i)[1])
   pt <- bldg[minIndex,]
-  r_ang <- c(cos(ang),sin(ang))
-  return (c(pt, r_ang))
+  r_slope <- c(cos(slope),sin(slope))
+  return (c(pt, r_slope))
   
   #### NOT USED ANYMORE
   # # For each line of the parcel, check if intersects with front cut line
@@ -611,17 +705,17 @@ perpDist <- function(x, y, x1, y1, x2, y2){
   return (sqrt(dx * dx + dy * dy))
 }
 
-# Check if 2 line segments intersect (line 1 made by point and angle) (line 2 made by two points)
-# Input: point 1 of line segment, point 2 of line segment, point of line, angle of line
-# Input: p1, p2, pt are vectors (length 2), ang is in degrees
+# Check if 2 line segments intersect (line 1 made by point and slope) (line 2 made by two points)
+# Input: point 1 of line segment, point 2 of line segment, point of line, slope of line
+# Input: p1, p2, pt are vectors (length 2), slope is in degrees
 # Output: returns true/false
 # https://stackoverflow.com/a/565282/68063
-checkIntersect <- function(p1, p2, pt, ang) {
+checkIntersect <- function(p1, p2, pt, slope) {
   q <- p1
   s <- p2 - p1
   # if (s[1]*s[1]+s[2]*s[2] < 1e-5) {return (FALSE)} # if two points are too close together,
   p <- pt
-  r <- c(cos(ang / 180 * pi), sin(ang / 180 * pi))
+  r <- c(cos(slope / 180 * pi), sin(slope / 180 * pi))
   if (crossprod2D(r, s) == 0) {
     # lines are parallel and do not intersect
     return(NULL)
@@ -708,25 +802,25 @@ allBuffers <- function(par, edges, bldg, front, side_dist, rear_dist){
 # Param: edge_index, buffer distance
 # Draw two points [buffer dist] perpendicular from edge midpoint, choose the point that is inside polygon
 # Draws parallel line that [buffer dist] away from the edge
-# Returns a line for the edge (u + param * angle vector r) as a vector length 4 (ux, uy, rx, ry)
+# Returns a line for the edge (u + param * slope vector r) as a vector length 4 (ux, uy, rx, ry)
 buffer <- function(par, ind, dist){
   edge <- par[ind:(ind+1),]      # index and next point
   # print(edge)
   edge_mp <- colMeans(edge)      # Edge midpoint
   # print(edge_mp)
-  edge_ang <- atan2(par[ind+1,2]-par[ind,2], par[ind+1,1]-par[ind,1])
-  # print(edge_ang)
-  offset <- dist * c(cos(edge_ang + pi/2), sin(edge_ang + pi/2))
+  edge_slope <- atan2(par[ind+1,2]-par[ind,2], par[ind+1,1]-par[ind,1])
+  # print(edge_slope)
+  offset <- dist * c(cos(edge_slope + pi/2), sin(edge_slope + pi/2))
   # print(offset)
   opt1 <- edge_mp + offset
   # print(opt1)
   opt2 <- edge_mp - offset
   # print(opt2)
   if (point.in.polygon(opt1[1],opt1[2],par[,1],par[,2]) == 1){ # If opt1 is inside polygon
-    vec <- c(cos(edge_ang), sin(edge_ang))
+    vec <- c(cos(edge_slope), sin(edge_slope))
     return (c(opt1, vec))    
   } else if (point.in.polygon(opt2[1],opt2[2],par[,1],par[,2]) == 1){ # If opt2 is inside polygon
-    vec <- c(cos(edge_ang), sin(edge_ang))
+    vec <- c(cos(edge_slope), sin(edge_slope))
     return (c(opt2, vec))
   } else{
     print("Buffer does not work for this polygon")
