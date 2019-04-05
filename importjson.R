@@ -143,15 +143,22 @@ removeCollinear <- function(arr){
   for (j in 1:length(slope)){
     slope[j] <- atan2(arr[j+1,2]-arr[j,2], arr[j+1,1]-arr[j,1])
   }
+  # print(slope)
   i <- 2
   while (i <= length(slope)){
-    if (abs(slope[i] - slope[i-1])/pi*180 < 0.5) {
+    if (abs(atan2(sin(slope[i] - slope[i-1]), cos(slope[i] - slope[i-1]))/pi*180) < 5){
       arr <- arr[-i,]
       slope[i-1] <- (slope[i]+slope[i-1])/2
       slope <- slope[-i]
       i <- i - 1            # adjust index, since we removed a point
     }
     i <- i + 1              # increment index
+  }
+  if (abs(atan2(sin(slope[1] - slope[length(slope)]), cos(slope[1] - slope[length(slope)]))/pi*180) < 5) { # Check first and last edge
+    print(arr)
+    arr <- arr[-1,]        # Remove first point
+    print(arr)
+    arr[dim(arr)[1],] <- arr[1,]      # Replace last point with new first point
   }
   return(arr)
 }
@@ -314,7 +321,7 @@ for (i in 1:len_json){
     slope[j] <- atan2(arr[j+1,2]-arr[j,2], arr[j+1,1]-arr[j,1])
   }
   totslo1 <- atan2(arr[dim(arr)[1],2]-arr[1,2], arr[dim(arr)[1],1]-arr[1,1])
-  totslo2 <- totslo1 - pi
+  totslo2 <- (totslo1 + pi) %% 2*pi
   # Save slopes
   cornerStats[[i]]$slopes <- slope
   # Average slope
@@ -342,10 +349,13 @@ segDiff[,2] <- 1:len_json
 colnames(segDiff) <- c("diff", "index")
 segDiff <- na.omit(segDiff)
 
-data_frame(val = segDiff[,1]) %>% 
+tibble(val = segDiff[,1]) %>% 
   ggplot(., aes(x = val)) +
   geom_histogram(aes(y = cumsum(..count..)/sum(..count..)), binwidth = 5) +
-  scale_x_reverse(breaks = seq(0, 180, 10), limits = c(90, 0)) +
+  scale_x_reverse(
+    breaks = seq(-180, 180, 30)
+    # , limits = c(90, 0)
+    ) +
   scale_y_continuous(labels = scales::percent)
 
 ## Look at break down of totdiff 
@@ -362,11 +372,11 @@ totDiff[,2] <- 1:len_json
 colnames(totDiff) <- c("totdiff", "index")
 totDiff <- na.omit(totDiff)
 
-data_frame(val = totDiff[,1]) %>% 
+tibble(val = totDiff[,1]) %>% 
   ggplot(., aes(x = val)) +
   geom_histogram(aes(y = ..count../sum(..count..)), binwidth = 5) +
-  scale_y_continuous(labels = scales::percent) +
-  scale_x_continuous(limits = c(90, 0))
+  scale_y_continuous(labels = scales::percent) #+
+  # scale_x_continuous(limits = c(0, 90))
 
 
 isCorner <- vector("logical", len_json)
@@ -375,7 +385,8 @@ for (i in 1:len_json){
   # if mostly straight, skip   *********************** try taking out this test
   # if (abs(cornerStats[[i]]$totdiff1) < (20/180*pi) || abs(cornerStats[[i]]$totdiff2) < (20/180*pi)) {next}
   # if first and last segment have more than 60 degrees diff, mark as corner
-  if (abs(cornerStats[[i]]$segdiff) >= (60/180*pi)) {isCorner[i] <- TRUE}
+  # if (abs(cornerStats[[i]]$segdiff) >= (40/180*pi)) {isCorner[i] <- TRUE}
+  else {isCorner[i] <-  TRUE}
 }
 
 
@@ -384,11 +395,13 @@ for (i in 1:len_json){
 # Read in roadway network. Find two closest roadway points to parcel centroid
 # Find edges within X degrees of parallel to roadway
 # For cases where there are more than 2 "chunks" near parallel, find chunk that is closest to roadway
-chunks <- vector("double", len_json)              # chunks of edges near parallel to road
-false_chunks <- vector("double", len_json)        # chunks of edges not near parallel to road
+# chunks <- vector("double", len_json)              # chunks of edges near parallel to road
+# false_chunks <- vector("double", len_json)        # chunks of edges not near parallel to road
 modParcelFront <- parcelFront
 roadway <- vector("list", len_json)
 closestRoad <- vector("list", len_json)
+slopeDiffs <- vector("double", len_json)
+orderRead <- vector("character", len_json)
 for (i in 1:len_json){
   if (isCorner[i]){  # Only modify if it is marked as a corner parcel
     print(i)
@@ -416,74 +429,148 @@ for (i in 1:len_json){
     for (j in 1:dim(road_arr)[1]){
       dist[j] <- ((par_cent[1]-road_arr[j,1])/100000)^2 + ((par_cent[2]-road_arr[j,2])/100000)^2
     }
-    print(dist)
+    # print(dist)
     ord <- order(dist)
-    print(ord)
+    # print(ord)
     road_arr <- road_arr[ord,]
     point1 <- road_arr[1,]
     point2 <- road_arr[2,]
     
     closestRoad[[i]] <- rbind(point1,point2)
     # We now have the slope of the roadway
-    road_slo <- atan2(point2[2]-point1[2],point2[1]-point1[1])
-    print(road_slo)
+    road_slo <- (atan2(point2[2]-point1[2],point2[1]-point1[1]) + 2*pi) %% 2*pi
+    # print(road_slo)
     
-    # Find edges within X degrees of parallel to roadway
+    # Compare first and last front point. ID which one has shortest perp dist to roadway.
+    first <- parcelFront[[i]][1,]
+    last <- parcelFront[[i]][dim(parcelFront[[i]])[1],]
+    distFirst <- perpDist(first[1], first[2], closestRoad[[i]][1,1], closestRoad[[i]][1,2], closestRoad[[i]][2,1], closestRoad[[i]][2,2])
+    distLast <- perpDist(last[1], last[2], closestRoad[[i]][1,1], closestRoad[[i]][1,2], closestRoad[[i]][2,1], closestRoad[[i]][2,2])
     slopes <- cornerStats[[i]]$slopes
-    nearParallel <- (abs(sin(slopes - road_slo)) < sqrt(2)/2)
-    print(nearParallel)
-    
-    # Check if there are more than one "chunk" (of consecutive edges) that is near parallel
-    preVal <- FALSE
-    chunkInd <- vector()
-    for (j in 1:length(nearParallel)){
-      if (j == 1 && nearParallel[j]){
-        chunks[i] <- chunks[i] + 1
-        chunkInd <- c(chunkInd, j)
+    # Case 1: First point is closer. Starting from first edge, grab all edges going up to the bisecting slope. If slope difference is less than 90 degrees, go up to 45 degrees
+    if (distFirst < distLast){
+      print("First < Last")
+      orderRead[i] <-  "First < Last"
+      slopeDiff <- atan2(sin(slopes[length(slopes)] - slopes[1]), cos(slopes[length(slopes)] - slopes[1]))
+      slopeDiffs[i] <- slopeDiff
+      if (slopeDiff < 0){
+        print("slopeDiff < 0")
+        delta <- max(min(slopeDiff * 0.5, -pi/6), -70/180*pi)  # Add a bit more than half, just as a buffer. Range must be between 45-70 degrees
+        slopeCut <- atan2(sin(slopes[1] + delta), cos(slopes[1] + delta))
+        for (j in 1:length(slopes)){
+          if (atan2(sin(slopes[j]-slopeCut), cos(slopes[j]-slopeCut)) < 0) {  # This edge goes past the threshold
+            print(j)
+            modParcelFront[[i]] <- parcelFront[[i]][1:j,]
+            break
+          }
+          # If no edge goes past the threshold, don't need to change anything
         }
-      else if (j == 1 && nearParallel[j] == FALSE){false_chunks[i] <- false_chunks[i] + 1}
-      else if (preVal == FALSE && nearParallel[j]){
-        chunks[i] <- chunks[i] + 1
-        chunkInd <- c(chunkInd, j)
-        }
-      else if (preVal && nearParallel[j] == FALSE){
-        false_chunks[i] <- false_chunks[i] + 1
-        chunkInd <- c(chunkInd, j - 1)
-        }
-      preVal <- nearParallel[j]
-    }
-    if (preVal == TRUE){
-      chunkInd <- c(chunkInd, length(nearParallel))
-    }
-    
-    # Case 1: more than one chunk
-    if (chunks[i] > 1){
-      chunkCent <- array(dim = c(chunks[i],2)) # Find centroid of each chunk
-      perpDistCent <- vector(length = chunks[i])
-      for (j in 1:chunks[i]){
-        start <- chunkInd[2*j-1]
-        finish <- chunkInd[2*j]
-        if (start == finish){
-          chunkCent[j,] <- parcelFront[[i]][start,]
-        } else{
-          chunkCent[j,] <- colMeans(parcelFront[[i]][start:finish,])
-        }
-        perpDistCent[j] <- perpDist(chunkCent[j,1],chunkCent[j,2],point1[1],point1[2],point2[1],point2[2])
       }
-      # Find which chunk is the shortest perpendicular dist from roadway
-      chunkNum <- which(perpDistCent == min(perpDistCent))[1]
-      start <- chunkInd[2*chunkNum-1]
-      finish <- chunkInd[2*chunkNum]
-      print(paste("Start = ", start, "Finish = ", finish))
-      modParcelFront[[i]] <- parcelFront[[i]][start:(finish+1),]
+      else{
+        print("slopeDiff >= 0")
+        delta <- min(max(slopeDiff * 0.5, pi/6), 70/180*pi)
+        slopeCut <- atan2(sin(slopes[1] + delta), cos(slopes[1] + delta))
+        for (j in 1:length(slopes)){
+          if (atan2(sin(slopes[j]-slopeCut), cos(slopes[j]-slopeCut)) > 0) {   # This edge goes past the threshold
+            print(j)
+            modParcelFront[[i]] <- parcelFront[[i]][1:j,]
+            break
+          }
+          # If no edge goes past the threshold, don't need to change anything
+        }
+      }
     }
-    # Case 2: one chunk. Just return that
+    # Case 2: Last point is closer. Starting from last edge, grad all edges going up to the bisecting slope. If slope difference is less than 90 degrees, go up to 45 degrees
     else{
-      start <- chunkInd[1]
-      finish <- chunkInd[2]
-      print(paste("Start = ", start, "Finish = ", finish))
-      modParcelFront[[i]] <- parcelFront[[i]][start:(finish+1),]
+      orderRead[i] <- "Last < First"
+      slopeDiff <- atan2(sin(slopes[1] - slopes[length(slopes)]), cos(slopes[1] - slopes[length(slopes)]))
+      slopeDiffs[i] <- slopeDiff
+      if (slopeDiff < 0){
+        print("slopeDiff < 0")
+        delta <- max(min(slopeDiff * 0.5, -pi/6), -70/180*pi)  # Add a bit more than half, just as a buffer
+        slopeCut <- atan2(sin(slopes[length(slopes)] + delta), cos(slopes[length(slopes)] + delta))
+        for (j in length(slopes):1){
+          if (atan2(sin(slopes[j]-slopeCut), cos(slopes[j]-slopeCut)) < 0){
+            print(j)
+            modParcelFront[[i]] <- parcelFront[[i]][(j+1):(length(slopes)+1),]
+            break
+          }
+          # If no edge goes past the threshold, don't need to change anything
+        }
+      }
+      else{
+        print("slopeDiff >= 0")
+        delta <- min(max(slopeDiff * 0.5, pi/6), 70/180*pi)
+        slopeCut <- atan2(sin(slopes[length(slopes)] + delta), cos(slopes[length(slopes)] + delta))
+        for (j in length(slopes):1){
+          if (atan2(sin(slopes[j]-slopeCut), cos(slopes[j]-slopeCut)) > 0){
+            print(j)
+            modParcelFront[[i]] <- parcelFront[[i]][(j+1):(length(slopes)+1),]
+            break
+          }
+          # If no edge goes past the threshold, don't need to change anything
+        }
+      }
     }
+    
+    
+    # # Find edges within X degrees of parallel to roadway
+    # slopes <- cornerStats[[i]]$slopes
+    # nearParallel <- (abs(sin(slopes - road_slo)) < sqrt(2)/2)
+    # print(nearParallel)
+    
+    # # Check if there are more than one "chunk" (of consecutive edges) that is near parallel
+    # preVal <- FALSE
+    # chunkInd <- vector()
+    # for (j in 1:length(nearParallel)){
+    #   if (j == 1 && nearParallel[j]){
+    #     chunks[i] <- chunks[i] + 1
+    #     chunkInd <- c(chunkInd, j)
+    #     }
+    #   else if (j == 1 && nearParallel[j] == FALSE){false_chunks[i] <- false_chunks[i] + 1}
+    #   else if (preVal == FALSE && nearParallel[j]){
+    #     chunks[i] <- chunks[i] + 1
+    #     chunkInd <- c(chunkInd, j)
+    #     }
+    #   else if (preVal && nearParallel[j] == FALSE){
+    #     false_chunks[i] <- false_chunks[i] + 1
+    #     chunkInd <- c(chunkInd, j - 1)
+    #     }
+    #   preVal <- nearParallel[j]
+    # }
+    # if (preVal == TRUE){
+    #   chunkInd <- c(chunkInd, length(nearParallel))
+    # }
+    # 
+    # # Case 1: more than one chunk
+    # if (chunks[i] > 1){
+    #   chunkCent <- array(dim = c(chunks[i],2)) # Find centroid of each chunk
+    #   perpDistCent <- vector(length = chunks[i])
+    #   for (j in 1:chunks[i]){
+    #     start <- chunkInd[2*j-1]
+    #     finish <- chunkInd[2*j]
+    #     if (start == finish){
+    #       chunkCent[j,] <- parcelFront[[i]][start,]
+    #     } else{
+    #       chunkCent[j,] <- colMeans(parcelFront[[i]][start:finish,])
+    #     }
+    #     perpDistCent[j] <- perpDist(chunkCent[j,1],chunkCent[j,2],point1[1],point1[2],point2[1],point2[2])
+    #   }
+    #   # Find which chunk is the shortest perpendicular dist from roadway
+    #   chunkNum <- which(perpDistCent == min(perpDistCent))[1]
+    #   start <- chunkInd[2*chunkNum-1]
+    #   finish <- chunkInd[2*chunkNum]
+    #   print(paste("Start = ", start, "Finish = ", finish))
+    #   modParcelFront[[i]] <- parcelFront[[i]][start:(finish+1),]
+    # }
+    # # Case 2: one chunk. Just return that
+    # else{
+    #   start <- chunkInd[1]
+    #   finish <- chunkInd[2]
+    #   print(paste("Start = ", start, "Finish = ", finish))
+    #   modParcelFront[[i]] <- parcelFront[[i]][start:(finish+1),]
+    # }
+    
   }
 }
 
@@ -499,7 +586,8 @@ for (i in 1:len_json){
   if (isCorner[i]){
     print(i)
     eqscplot(json_data[[i]],type='l', tol=0.9)
-    points(modParcelFront[[i]])
+    points(parcelFront[[i]], pch = 1)
+    points(modParcelFront[[i]], pch = 16)
     points(closestRoad[[i]])
     lines(roadway[[i]])
     # Sys.sleep(0.1)  # Pause and continues automatically
@@ -508,9 +596,12 @@ for (i in 1:len_json){
 }
 
 # Troubleshooting
-checkCorner <- function(index){
-  eqscplot(json_data[[index]], type='l')
-  points(modParcelFront[[index]])
+checkCorner <- function(i){
+  eqscplot(json_data[[i]],type='l', tol=0.9)
+  points(parcelFront[[i]], pch = 1)
+  points(modParcelFront[[i]], pch = 16)
+  points(closestRoad[[i]])
+  lines(roadway[[i]])
 }
 
 # Function
@@ -674,35 +765,40 @@ removeFront <- function(par, bldg, front){
 
 # Helper function: shortest distance between a point and a line segment
 # (x,y) is the point, (x1,y2) and (x2,y2) make the line segment
+# 
 # https://stackoverflow.com/a/6853926
+# changed to this formula for infinite line from two points
+# https://en.wikipedia.org/wiki/Distance_from_a_point_to_a_line#Line_defined_by_two_points
 perpDist <- function(x, y, x1, y1, x2, y2){
-  A <- x - x1
-  B <- y - y1
-  C <- x2 - x1
-  D <- y2 - y1
-  dot <- A * C + B * D
-  len_sq <- C * C + D * D
-  param <- -1
-  if (len_sq != 0){  # in case of 0 length line
-    param <- dot / len_sq
-  }
-  xx <- 0
-  yy <- 0
-  if (param < 0){
-    xx <- x2
-    yy <- y1
-  }
-  else if (param > 1){
-    xx <- x2
-    yy <- y2
-  }
-  else{
-    xx = x1 + param * C
-    yy = y1 + param * D
-  }
-  dx <- x - xx
-  dy <- y - yy
-  return (sqrt(dx * dx + dy * dy))
+  # A <- x - x1
+  # B <- y - y1
+  # C <- x2 - x1
+  # D <- y2 - y1
+  # dot <- A * C + B * D
+  # len_sq <- C * C + D * D
+  # param <- -1
+  # if (len_sq != 0){  # in case of 0 length line
+  #   param <- dot / len_sq
+  # }
+  # xx <- 0
+  # yy <- 0
+  # if (param < 0){
+  #   xx <- x2
+  #   yy <- y1
+  # }
+  # else if (param > 1){
+  #   xx <- x2
+  #   yy <- y2
+  # }
+  # else{
+  #   xx = x1 + param * C
+  #   yy = y1 + param * D
+  # }
+  # dx <- x - xx
+  # dy <- y - yy
+  # return (sqrt(dx * dx + dy * dy))
+  
+  return (abs((y2-y1) * x - (x2-x1) * y + x2*y1 - y2*x1)/sqrt((y2 - y1)^2 + (x2 - x1)^2))
 }
 
 # Check if 2 line segments intersect (line 1 made by point and slope) (line 2 made by two points)
