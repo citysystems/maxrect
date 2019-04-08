@@ -7,6 +7,9 @@ library(MASS)
 library(sp)
 library(dplyr)
 library(ggplot2)
+library(ggrepel)
+library(sf)
+library(lwgeom)
 
 # To save current environment
 save.image(".RData")
@@ -587,12 +590,83 @@ for (i in 1:len_json){
     print(i)
     eqscplot(json_data[[i]],type='l', tol=0.9)
     points(parcelFront[[i]], pch = 1)
+    text(parcelFront[[i]], labels = row(parcelFront[[i]]), pos = 4, offset = 1)
     points(modParcelFront[[i]], pch = 16)
     points(closestRoad[[i]])
     lines(roadway[[i]])
     # Sys.sleep(0.1)  # Pause and continues automatically
     invisible(readline(prompt="Press [enter] to continue"))  # Manually press enter to continue
   }
+}
+
+# Manual check whether the modified parcel fronts are good, and adjust them manually
+modIndexFront <- vector("list", len_json)
+for (i in 1:len_json){
+  if (isCorner[i]){
+    
+    
+    # User will manually check points
+    correction <- readline(prompt="Are the green ones ID'd correctly? Enter index/indices of points that need to be switched (space in between each number):")
+    correction <- unlist(strsplit(correction, split=" "))
+    
+    
+    # Get the modified parcel indices for front from the function
+    modIndexFront[[i]] <- vector("logical", dim(parcel_data[[i]])[1]-1)
+    for (j in 1:(dim(parcel_data[[i]])[1]-1)){
+      print(j)
+      for (k in 1:dim(modParcelFront[[i]])[1]){
+        if (abs(parcel_data[[i]][j,1]-modParcelFront[[i]][k,1]) < 0.001 && abs(parcel_data[[i]][j,2]-modParcelFront[[i]][k,2]) < 0.0001){
+          modIndexFront[[i]][j] <- TRUE
+          break
+        }
+      }
+    }
+    
+    if(length(correction) > 0){
+      for (j in 1:length(correction)){
+        index <- correction[j]
+        modIndexFront[[i]][j] <- !modIndexFront[[i]][j]
+      }
+    }
+    
+    
+    # invisible(readline(prompt="Press [enter] to continue"))  # Manually press enter to continue
+  }
+}
+
+checkCorner <- function(i){
+  print(i)
+  
+  # Convert matrices to tibbles
+  tblPar <- as_tibble(json_data[[i]])
+  tblFront <- as_tibble(parcelFront[[i]])
+  tblModFront <- as_tibble(modParcelFront[[i]])
+  tblClosestRoad <- as_tibble(closestRoad[[i]])
+  tblRoadway <- as_tibble(roadway[[i]])
+  
+  # Get XY limits of parcel
+  parXMin <- min(tblPar[[1]])
+  parXMax <- max(tblPar[[1]])
+  parYMin <- min(tblPar[[2]])
+  parYMax <- max(tblPar[[2]])
+  
+  # Adjust the scope of the plot
+  XMin <- parXMin - (parXMax - parXMin)
+  XMax <- parXMax + (parXMax - parXMin)
+  YMin <- parYMin - (parYMax - parYMin)
+  YMax <- parYMax + (parYMax - parYMin)
+  
+  # Plot the parcel and points and roadway for user to check
+  print(
+    ggplot() +
+      geom_polygon(data = tblPar, aes(V1, V2), color = 'gray') +
+      geom_point(data = tblFront, aes(V1, V2), color = 'red', size = 3) +
+      geom_point(data = tblModFront, aes(V1, V2), color = 'green', size = 3) +
+      geom_line(data = tblRoadway, aes(V1, V2)) +
+      geom_line(data = tblClosestRoad, aes(V1, V2), color = 'blue', size = 3) +
+      geom_label_repel(data = tblFront, aes(V1, V2, label = rownames(tblFront))) +
+      coord_cartesian(xlim = c(XMin, XMax), ylim = c(YMin, YMax))
+  )
 }
 
 # Troubleshooting
@@ -763,11 +837,9 @@ removeFront <- function(par, bldg, front){
   # else {print("Abnormal number of intersections")}
 }
 
-# Helper function: shortest distance between a point and a line segment
+# Helper function: normal distance between a point and a line segment
 # (x,y) is the point, (x1,y2) and (x2,y2) make the line segment
 # 
-# https://stackoverflow.com/a/6853926
-# changed to this formula for infinite line from two points
 # https://en.wikipedia.org/wiki/Distance_from_a_point_to_a_line#Line_defined_by_two_points
 perpDist <- function(x, y, x1, y1, x2, y2){
   # A <- x - x1
@@ -801,6 +873,44 @@ perpDist <- function(x, y, x1, y1, x2, y2){
   return (abs((y2-y1) * x - (x2-x1) * y + x2*y1 - y2*x1)/sqrt((y2 - y1)^2 + (x2 - x1)^2))
 }
 
+
+# Helper function: shortest distance between a point and a line segment
+# (x,y) is the point, (x1,y2) and (x2,y2) make the line segment
+# 
+# https://stackoverflow.com/a/6853926
+distPtLineSeg <- function(x, y, x1, y1, x2, y2){
+  A <- x - x1
+  B <- y - y1
+  C <- x2 - x1
+  D <- y2 - y1
+  dot <- A * C + B * D
+  len_sq <- C * C + D * D
+  param <- -1
+  if (len_sq != 0){  # in case of 0 length line
+    param <- dot / len_sq
+  }
+  xx <- 0
+  yy <- 0
+  if (param < 0){
+    xx <- x2
+    yy <- y1
+  }
+  else if (param > 1){
+    xx <- x2
+    yy <- y2
+  }
+  else{
+    xx = x1 + param * C
+    yy = y1 + param * D
+  }
+  dx <- x - xx
+  dy <- y - yy
+  return (sqrt(dx * dx + dy * dy))
+}
+
+
+
+
 # Check if 2 line segments intersect (line 1 made by point and slope) (line 2 made by two points)
 # Input: point 1 of line segment, point 2 of line segment, point of line, slope of line
 # Input: p1, p2, pt are vectors (length 2), slope is in degrees
@@ -827,7 +937,7 @@ checkIntersect <- function(p1, p2, pt, slope) {
 
 # Check if 2 lines intersect (each one consists of (x1, y1, r_x, r_y))
 # Input: line1, line2 (length 4 vector)
-# Output: returns true/false
+# Output: returns point of intersection. if no intersection, returns NULL
 # https://stackoverflow.com/a/565282/68063
 intersectLines <- function(line1, line2) {
   p <- c(line1[1],line1[2])
@@ -861,7 +971,7 @@ crossprod2D <- function(u, v){
 # Find intersection between adjacent lines to reconstruct buffered parcel
 # Check whether buffer overlaps with building. If it does, adjust so that there is no intersection in result
 # Output: new parcel coordinates, array (n by 2)
-allBuffers <- function(par, edges, bldg, front, side_dist, rear_dist){
+allBuffers <- function(par, edges, bldg, front, side_dist, rear_dist, bldg_dist = 0){
   buffers <- array(dim = c(0, 4))
   skipFront <- FALSE               # Keep track of whether front cut was already added. If so, skip other front edges
   # Find the lines for all the buffers
@@ -888,7 +998,63 @@ allBuffers <- function(par, edges, bldg, front, side_dist, rear_dist){
     newPar[i,] <- intersectLines(buffers[i,],buffers[i+1,])
   }
   newPar[length(edges)+1,] <- newPar[1,]
-  return (newPar)
+  # print("test")
+  # Check if new parcel has any intersections due to buffers overtaking edge(s)
+  # Use st_is_valid() to check
+  sf_newPar <- st_as_sf(SpatialPolygons(list(Polygons(list(Polygon(newPar)),1))))
+  # print("test2")
+  # Remove building parcel from new parcel
+  sf_bldg <- st_as_sf(SpatialPolygons(list(Polygons(list(Polygon(bldg)),1))))
+  sf_bldg <- st_buffer(sf_bldg, bldg_dist)
+  # print("test3")
+  
+  # If there are intersections, this will split into multiple polygons. If not, nothing changes
+  split <- st_cast(st_make_valid(sf_newPar), "POLYGON")
+  split <- st_difference(split, sf_bldg)
+  # print(split)
+  if (length(split[[1]]) == 0){
+    return ("No suitable polygons")
+  }
+  
+  
+  # Get the order of polygons by largest to smallest
+  ord <- order(st_area(split), decreasing = TRUE)
+  
+  # Initialize variable to keep track of all valid areas
+  polys <- NULL
+  
+  for (i in 1:length(ord)){
+    inverted <- FALSE     # Track
+    poly <- split[ord[i],]
+    
+    # If polygon is not inverted, return this polygon
+    # Check shortest distance between polygon centroid and each edge. 
+    cent <- st_coordinates(st_centroid(poly))
+    for (j in 1:length(edges)){
+      if (edges[j] == "Front") {next} # Skip front facing, since we don't know the distance
+      else if (edges[j] == "Side") {dist <- side_dist}
+      else {dist <- rear_dist}
+      
+      # distPtLineSeg <- function(x, y, x1, y1, x2, y2){
+      # If the distance > respective buffer, not inverted. Skip to next polygon
+      if (dist > distPtLineSeg(cent[1], cent[2], par[j,1], par[j,2], par[j+1,1], par[j+1,2])){ 
+        inverted <- TRUE
+        break
+      }
+    }
+    # If after checking all the sides, not marked as inverted, add this polygon
+    if (!inverted){
+      # polys <- rbind(polys, poly)
+      return(st_coordinates(poly)[,1:2])
+    }
+  }
+  # 
+  # if (length(polys) > 0){
+  #   
+  # }
+  # else{
+    return ("No suitable polygons")
+  # }
 }
 
 
