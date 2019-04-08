@@ -15,122 +15,64 @@ library(lwgeom)
 save.image(".RData")
 
 
-### parcels minus building footprint
-json_file <- "epaparcelsnobldg.json"
-full_json_data <- fromJSON(txt=json_file, flatten = TRUE, simplifyDataFrame = TRUE)
-# Filter down to 3920 SFH parcels
-apn_file <- "apn.csv"
-apn <- read_csv(apn_file)
-apn <- paste( "0", apn$apn, sep = "")
-full_json_data <- dplyr::filter(full_json_data, APN %in% apn)
-
-### parcels and their streets
-street_file <- "apn_street.csv"
-street <- read_csv(street_file)
-street$apn <- paste0( "0", street$apn)
-full_json_data <- full_json_data %>% inner_join(street, by = c("APN" = "apn"))
-
-### sort by APN increasing
-ord <- sort.list(full_json_data$APN)
-full_json_data <- full_json_data[ord,]
-rownames(full_json_data) <- 1:nrow(full_json_data)
-
-# Pull polygons
-json_data <- full_json_data$json_geometry.coordinates
-len_json <- length(json_data)
-
-# Find number of polygons for each parcel
-numPoly <- vector(mode = "double", length = length(json_data))
-for (i in 1:len_json){
-  if (typeof(json_data[[i]]) == "list"){
-    numPoly[i] <- length(json_data[[i]])
-  } else if (typeof(json_data[[i]]) == "double"){
-    numPoly[i] <- dim(json_data[[i]])[1]
-  } else {
-    numPoly[i] <- 0
-  }
-}
-table(numPoly)
-
-
-### parcels without building footprint
-parcel_file <- "epaparcels_clean.geojson"
-parcels <- fromJSON(txt=parcel_file, flatten = TRUE, simplifyDataFrame = TRUE)
+### parcels 
+file_parcel <- "epaparcels_clean.geojson"
+parcels <- fromJSON(txt=file_parcel, flatten = TRUE, simplifyDataFrame = TRUE)
 parcels <- parcels$features
-parcels <- dplyr::filter(parcels, properties.APN %in% full_json_data$APN)
+# Filter down to 3920 SFH parcels
+file_apn <- "apn.csv"
+apn <- read_csv(file_apn)
+apn <- paste( "0", apn$apn, sep = "")
+parcels <- dplyr::filter(parcels, properties.APN %in% apn)
+### Join parcels to their address streets
+file_street <- "apn_street.csv"
+street <- read_csv(file_street)
+street$apn <- paste0( "0", street$apn)
+parcels <- parcels %>% inner_join(street, by = c("properties.APN" = "apn"))
 ord <- sort.list(parcels$properties.APN)
 parcels <- parcels[ord,]
-rownames(parcels) <- 1:len_json
+numPar <- dim(parcels)[1]
+rownames(parcels) <- 1:numPar
 parcel_data <- parcels$geometry.coordinates
 
-
 ### roads
-roads_file <- "epa_roads_adj.geojson"
-roads <- fromJSON(txt=roads_file, flatten = TRUE, simplifyDataFram = TRUE)
+file_roads <- "epa_roads_adj.geojson"
+roads <- fromJSON(txt=file_roads, flatten = TRUE, simplifyDataFrame = TRUE)
 roads <- roads$features
-
-match_street <- toupper(match_street) %in% toupper(roads$properties.FULLNAME)
-
-
-### Rewrite the function for checking street matching
 
 
 # Initialize column for storing road segments
-full_json_data[,"list_roads"] <- NA
-for (i in 1:dim(full_json_data)[1]){
-  full_json_data$list_roads[i] <- list(roads %>% filter(toupper(properties.FULLNAME) == toupper(full_json_data$address[[i]])))
+parcels[,"list_roads"] <- NA
+for (i in 1:numPar){
+  parcels$list_roads[i] <- list(roads %>% filter(toupper(properties.FULLNAME) == toupper(parcels$address[[i]])))
 }
 
 
 ### coordinates of front
-json_block <- "front_vertices_cleaned.geojson"
-json_block_data <- fromJSON(txt=json_block, flatten = TRUE, simplifyDataFrame = TRUE, simplifyMatrix = TRUE)
-json_block_data <- json_block_data$features$geometry.coordinates
-json_block_length <- length(json_block_data)
-json_block_points <- array(data = 0, dim = c(json_block_length, 2))
-for(i in 1:json_block_length){
-  print(i)
-  v <- json_block_data[[i]]
-  if(is.null(json_block_data[[i]]) || typeof(json_block_data[[i]]) != "double"){next}
-  x <- v[1]
-  y <- v[2]
-  json_block_points[i,1] <- x
-  json_block_points[i,2] <- y
+file_blocks <- "front_vertices_cleaned.geojson"
+blocks <- fromJSON(txt=file_blocks, flatten = TRUE, simplifyDataFrame = TRUE, simplifyMatrix = TRUE)
+blocks <- blocks$features$geometry.coordinates
+blockPts <- array(data = 0, dim = c(length(blocks), 2))
+for(i in 1:length(blocks)){
+  if(is.null(blocks[[i]]) || typeof(blocks[[i]]) != "double"){next}
+  blockPts[i,1] <- blocks[[i]][1]
+  blockPts[i,2] <- blocks[[i]][2]
 }
-json_block_points <- json_block_points[json_block_points[,1] != 0,]
-json_block_points <- json_block_points[order( json_block_points[,1], json_block_points[,2]),]
-json_block_points <- unique(json_block_points)
-json_block_length <- dim(json_block_points)[1]
+blockPts <- blockPts[blockPts[,1] != 0,]
+blockPts <- blockPts[order( blockPts[,1], blockPts[,2]),]
+blockPts <- unique(blockPts)
 
-# json_block <- "epaparcels_dissolved/epaparcels_dissolved_adj.geojson"
-# json_block_data <- fromJSON(txt=json_block, flatten = TRUE, simplifyDataFrame = TRUE, simplifyMatrix = TRUE)
-# json_block_data <- json_block_data$features$geometry.coordinates[[1]]
-# 
-# json_block_length <- 0
-# for(i in 1:length(json_block_data)){
-#   json_block_data[[i]] <- drop(json_block_data[[i]])
-#   json_block_length <- json_block_length + dim(json_block_data[[i]])[1]
-# }
-# jsonIndex <- 1
-# json_block_points <- array(data = 0, dim = c(json_block_length, 2))
-# for(i in 1:length(json_block_data)){
-#   for(j in 1:dim(json_block_data[[i]])[1]){
-#     json_block_points[jsonIndex,] <- json_block_data[[i]][j,]
-#     jsonIndex <- jsonIndex + 1
-#   }
-# }
-# json_block_points <- json_block_points[order( json_block_points[,1], json_block_points[,2]),]
 
 # Check if point is at front
 # Inputs one point (x, y coordinate 1 x 2 vector)
 # Outputs a boolean
 isFront1 <- function(point){
-  # Check if point matches json_block_data
-  index <- findInterval(point[1], json_block_points[,1])  # This index may be +/- 1 from the actual value
+  # Check if point matches blocks
+  index <- findInterval(point[1], blockPts[,1])  # This index may be +/- 1 from the actual value
   if (index > 0) {index <- index - 1}                   # Move back one
   for (i in 1:3){                      # Make sure a minimum of three iterations done before stopping
-    while((index > 0) && (index <= dim(json_block_points)[1]) && (abs(point[1] - json_block_points[index,1]) <= 1.5)){         # search all coordinates w/ same X coord
-      if(abs(point[2] - json_block_points[index,2]) <= 1.5){return(TRUE)}
+    while((index > 0) && (index <= dim(blockPts)[1]) && (abs(point[1] - blockPts[index,1]) <= 1.5)){         # search all coordinates w/ same X coord
+      if(abs(point[2] - blockPts[index,2]) <= 1.5){return(TRUE)}
       index <- index + 1
     }
     index <- index + 1
@@ -158,38 +100,36 @@ removeCollinear <- function(arr){
     i <- i + 1              # increment index
   }
   if (abs(atan2(sin(slope[1] - slope[length(slope)]), cos(slope[1] - slope[length(slope)]))/pi*180) < 5) { # Check first and last edge
-    print(arr)
+    # print(arr)
     arr <- arr[-1,]        # Remove first point
-    print(arr)
+    # print(arr)
     arr[dim(arr)[1],] <- arr[1,]      # Replace last point with new first point
   }
   return(arr)
 }
 
-
-for (i in 1:len_json){
+# Remove collinear points from parcels
+for (i in 1:numPar){
   arr <- drop(parcel_data[[i]])
   parcel_data[[i]] <- removeCollinear(arr)
 }
 
-
-json_data <-  parcel_data        #### DOUBLE CHECK THIS VARIABLE EVERY TIME
 # Find number of landlocked parcels (all points are touching another parcel)
 # First, pull all the coordinates for the first polygon for each parcel
-checkFront <- vector("logical", len_json)   # Keep track of whether a parcel touches the front
-numFront <- vector("double", len_json)      # Keep track of number of points that touch the front
-indexFront <- vector("list", len_json)      # Keep track of index of points that touch the front
-for (i in 1:len_json){
+checkFront <- vector("logical", numPar)   # Keep track of whether a parcel touches the front
+numFront <- vector("double", numPar)      # Keep track of number of points that touch the front
+indexFront <- vector("list", numPar)      # Keep track of index of points that touch the front
+for (i in 1:numPar){
   print(i)
-  if (typeof(json_data[[i]]) == "list"){
-    poly <- unique(drop(json_data[[i]][[1]]))
+  if (typeof(parcel_data[[i]]) == "list"){
+    poly <- unique(drop(parcel_data[[i]][[1]]))
   }
-  else if (typeof(json_data[[i]]) == "double"){
-    # if (length(dim(json_data[[i]])) > 3){
-      # poly <- drop(json_data[[i]])[1,,]
-      poly <- unique(drop(json_data[[i]]))
+  else if (typeof(parcel_data[[i]]) == "double"){
+    # if (length(dim(parcel_data[[i]])) > 3){
+      # poly <- drop(parcel_data[[i]])[1,,]
+      poly <- unique(drop(parcel_data[[i]]))
     # }
-    # else{poly <- unique(json_data[[i]][1,,])}
+    # else{poly <- unique(parcel_data[[i]][1,,])}
   }
   else{
     break
@@ -207,17 +147,14 @@ for (i in 1:len_json){
 sum(checkFront)
 table(numFront)
 
-
-
-
 # Front indices may be out of order if the polygon starting point is in the middle of the front
-chunks <- vector("double", len_json)              # chunks of points marked as front
-false_chunks <- vector("double", len_json)        # chunks of points not marked as front (used to ID problems)
-offsetFront <- vector("double", len_json)         # what number of points to move to the back
-deleteFront <- vector("double", len_json)         # what index point to remove
-chunks2 <- vector("double", len_json)              # chunks of points marked as front
-false_chunks2 <- vector("double", len_json)        # chunks of points not marked as front (used to ID problems)
-for (i in 1:len_json){
+chunks <- vector("double", numPar)              # chunks of points marked as front
+false_chunks <- vector("double", numPar)        # chunks of points not marked as front (used to ID problems)
+offsetFront <- vector("double", numPar)         # what number of points to move to the back
+deleteFront <- vector("double", numPar)         # what index point to remove
+chunks2 <- vector("double", numPar)              # chunks of points marked as front
+false_chunks2 <- vector("double", numPar)        # chunks of points not marked as front (used to ID problems)
+for (i in 1:numPar){
   preVal <- FALSE
   arr <- indexFront[[i]]
   for (j in 1:length(arr)){
@@ -265,21 +202,21 @@ View(cbind(chunks, false_chunks))
 View(cbind(chunks2, false_chunks2))
 
 # Extract parcel front points
-parcelFront <- vector(mode = "list", len_json)     # Keep track of the points that touch the front
-# for (i in 1:len_json){
-for (i in 1:len_json){
+parcelFront <- vector(mode = "list", numPar)     # Keep track of the points that touch the front
+# for (i in 1:numPar){
+for (i in 1:numPar){
   if (checkFront[i]){   # Check whether we need to save any points
     parcelFront[[i]] <- array(dim = c(numFront[i],2))
     index <- 1
-    if (typeof(json_data[[i]]) == "list"){
-      poly <- unique(drop(json_data[[i]][[1]]))
+    if (typeof(parcel_data[[i]]) == "list"){
+      poly <- unique(drop(parcel_data[[i]][[1]]))
     }
-    else if (typeof(json_data[[i]]) == "double"){
-      # if (length(dim(json_data[[i]])) > 3){
-        # poly <- drop(json_data[[i]])[1,,]
-        poly <- unique(drop(json_data[[i]]))
+    else if (typeof(parcel_data[[i]]) == "double"){
+      # if (length(dim(parcel_data[[i]])) > 3){
+        # poly <- drop(parcel_data[[i]])[1,,]
+        poly <- unique(drop(parcel_data[[i]]))
       # }
-      # else{poly <- unique(json_data[[i]][1,,])}
+      # else{poly <- unique(parcel_data[[i]][1,,])}
     }
     for (j in 1:(dim(poly)[1])){
       if (isFront1(poly[j,])){
@@ -299,7 +236,7 @@ for (i in 1:len_json){
 
 
 # Check if front edge is properly extracted
-for (i in 1:len_json){
+for (i in 1:numPar){
   print(i)
   if (is.null(parcelFront[[i]])) {next}
   if (dim(parcelFront[[i]])[1] == 1) {next}
@@ -312,8 +249,8 @@ for (i in 1:len_json){
 }
 
 # Identify corner lots
-cornerStats <- vector(mode = "list", len_json)
-for (i in 1:len_json){
+cornerStats <- vector(mode = "list", numPar)
+for (i in 1:numPar){
   if(is.null(parcelFront[[i]])) {next}              # Skip landlocked
   else if (dim(parcelFront[[i]])[1] < 3) {next}     # Skip parcels with 1 or 2 front points (most likly not a corner)
   arr <- parcelFront[[i]]                           # Get the front points
@@ -337,10 +274,9 @@ for (i in 1:len_json){
   cornerStats[[i]]$segdiff <- atan2(sin(slope[length(slope)]-slope[1]), cos(slope[length(slope)]-slope[1]))
 }
 
-
 ## Look at the break down of slope differences across parcels to figure out what is a good threshold
-segDiff <- array(dim = c(len_json,2))
-for (i in 1:len_json){
+segDiff <- array(dim = c(numPar,2))
+for (i in 1:numPar){
   if (is.null(cornerStats[[i]])) {
     segDiff[i,1] <- NA
   }
@@ -348,7 +284,7 @@ for (i in 1:len_json){
     segDiff[i,1] <- abs(cornerStats[[i]]$segdiff)/pi*180
   }
 }
-segDiff[,2] <- 1:len_json
+segDiff[,2] <- 1:numPar
 colnames(segDiff) <- c("diff", "index")
 segDiff <- na.omit(segDiff)
 
@@ -362,8 +298,8 @@ tibble(val = segDiff[,1]) %>%
   scale_y_continuous(labels = scales::percent)
 
 ## Look at break down of totdiff 
-totDiff <- array(dim = c(len_json,2))
-for (i in 1:len_json){
+totDiff <- array(dim = c(numPar,2))
+for (i in 1:numPar){
   if (is.null(cornerStats[[i]])) {
     totDiff[i,1] <- NA
   }
@@ -371,7 +307,7 @@ for (i in 1:len_json){
     totDiff[i,1] <- abs(min(cornerStats[[i]]$totdiff1, cornerStats[[i]]$totdiff2))/pi*180
   }
 }
-totDiff[,2] <- 1:len_json
+totDiff[,2] <- 1:numPar
 colnames(totDiff) <- c("totdiff", "index")
 totDiff <- na.omit(totDiff)
 
@@ -382,8 +318,8 @@ tibble(val = totDiff[,1]) %>%
   # scale_x_continuous(limits = c(0, 90))
 
 
-isCorner <- vector("logical", len_json)
-for (i in 1:len_json){
+isCorner <- vector("logical", numPar)
+for (i in 1:numPar){
   if (is.null(cornerStats[[i]])) {next}
   # if mostly straight, skip   *********************** try taking out this test
   # if (abs(cornerStats[[i]]$totdiff1) < (20/180*pi) || abs(cornerStats[[i]]$totdiff2) < (20/180*pi)) {next}
@@ -392,25 +328,21 @@ for (i in 1:len_json){
   else {isCorner[i] <-  TRUE}
 }
 
-
-
 # Extract front edge for corner lot
 # Read in roadway network. Find two closest roadway points to parcel centroid
-# Find edges within X degrees of parallel to roadway
-# For cases where there are more than 2 "chunks" near parallel, find chunk that is closest to roadway
-# chunks <- vector("double", len_json)              # chunks of edges near parallel to road
-# false_chunks <- vector("double", len_json)        # chunks of edges not near parallel to road
+# Of the two ends of the front, choose the point shortest normal dist to roadway
+# Select edges that are within a certain angle of the segment on this end
 modParcelFront <- parcelFront
-roadway <- vector("list", len_json)
-closestRoad <- vector("list", len_json)
-slopeDiffs <- vector("double", len_json)
-orderRead <- vector("character", len_json)
-for (i in 1:len_json){
+roadway <- vector("list", numPar)
+closestRoad <- vector("list", numPar)
+slopeDiffs <- vector("double", numPar)
+orderRead <- vector("character", numPar)
+for (i in 1:numPar){
   if (isCorner[i]){  # Only modify if it is marked as a corner parcel
     print(i)
     par_cent <- colMeans(drop(parcel_data[[i]]))      # Get the parcel centroid
     # Extract associated road
-    roads <- full_json_data$list_roads[[i]]$geometry.coordinates     # Get the list
+    roads <- parcel_data$list_roads[[i]]$geometry.coordinates     # Get the list
     # Find two closest points on roadway network to parcel centroid
     minDist1 <- 1e99
     minDist2 <- 1e99
@@ -515,68 +447,10 @@ for (i in 1:len_json){
         }
       }
     }
-    
-    
-    # # Find edges within X degrees of parallel to roadway
-    # slopes <- cornerStats[[i]]$slopes
-    # nearParallel <- (abs(sin(slopes - road_slo)) < sqrt(2)/2)
-    # print(nearParallel)
-    
-    # # Check if there are more than one "chunk" (of consecutive edges) that is near parallel
-    # preVal <- FALSE
-    # chunkInd <- vector()
-    # for (j in 1:length(nearParallel)){
-    #   if (j == 1 && nearParallel[j]){
-    #     chunks[i] <- chunks[i] + 1
-    #     chunkInd <- c(chunkInd, j)
-    #     }
-    #   else if (j == 1 && nearParallel[j] == FALSE){false_chunks[i] <- false_chunks[i] + 1}
-    #   else if (preVal == FALSE && nearParallel[j]){
-    #     chunks[i] <- chunks[i] + 1
-    #     chunkInd <- c(chunkInd, j)
-    #     }
-    #   else if (preVal && nearParallel[j] == FALSE){
-    #     false_chunks[i] <- false_chunks[i] + 1
-    #     chunkInd <- c(chunkInd, j - 1)
-    #     }
-    #   preVal <- nearParallel[j]
-    # }
-    # if (preVal == TRUE){
-    #   chunkInd <- c(chunkInd, length(nearParallel))
-    # }
-    # 
-    # # Case 1: more than one chunk
-    # if (chunks[i] > 1){
-    #   chunkCent <- array(dim = c(chunks[i],2)) # Find centroid of each chunk
-    #   perpDistCent <- vector(length = chunks[i])
-    #   for (j in 1:chunks[i]){
-    #     start <- chunkInd[2*j-1]
-    #     finish <- chunkInd[2*j]
-    #     if (start == finish){
-    #       chunkCent[j,] <- parcelFront[[i]][start,]
-    #     } else{
-    #       chunkCent[j,] <- colMeans(parcelFront[[i]][start:finish,])
-    #     }
-    #     perpDistCent[j] <- perpDist(chunkCent[j,1],chunkCent[j,2],point1[1],point1[2],point2[1],point2[2])
-    #   }
-    #   # Find which chunk is the shortest perpendicular dist from roadway
-    #   chunkNum <- which(perpDistCent == min(perpDistCent))[1]
-    #   start <- chunkInd[2*chunkNum-1]
-    #   finish <- chunkInd[2*chunkNum]
-    #   print(paste("Start = ", start, "Finish = ", finish))
-    #   modParcelFront[[i]] <- parcelFront[[i]][start:(finish+1),]
-    # }
-    # # Case 2: one chunk. Just return that
-    # else{
-    #   start <- chunkInd[1]
-    #   finish <- chunkInd[2]
-    #   print(paste("Start = ", start, "Finish = ", finish))
-    #   modParcelFront[[i]] <- parcelFront[[i]][start:(finish+1),]
-    # }
-    
   }
 }
 
+# Take a look at the roads 
 troubleshootRoad <- function(index){
   eqscplot(roadway[[index]], type='l')
   points(closestRoad[[index]], pch = 19)
@@ -584,11 +458,11 @@ troubleshootRoad <- function(index){
   lines(parcel_data[[index]])
 }
 
-# Check if the modified parcel fronts are good
-for (i in 1:len_json){
+# Check if the modified parcel fronts are good without edits
+for (i in 1:numPar){
   if (isCorner[i]){
     print(i)
-    eqscplot(json_data[[i]],type='l', tol=0.9)
+    eqscplot(parcel_data[[i]],type='l', tol=0.9)
     points(parcelFront[[i]], pch = 1)
     text(parcelFront[[i]], labels = row(parcelFront[[i]]), pos = 4, offset = 1)
     points(modParcelFront[[i]], pch = 16)
@@ -600,10 +474,12 @@ for (i in 1:len_json){
 }
 
 # Manual check whether the modified parcel fronts are good, and adjust them manually
-modIndexFront <- vector("list", len_json)
-for (i in 1:len_json){
+modIndexFront <- vector("list", numPar)
+for (i in 1:numPar){
   if (isCorner[i]){
     
+    # Plot parcel and points
+    checkCorner(i)
     
     # User will manually check points
     correction <- readline(prompt="Are the green ones ID'd correctly? Enter index/indices of points that need to be switched (space in between each number):")
@@ -629,16 +505,13 @@ for (i in 1:len_json){
       }
     }
     
-    
     # invisible(readline(prompt="Press [enter] to continue"))  # Manually press enter to continue
   }
 }
 
 checkCorner <- function(i){
-  print(i)
-  
   # Convert matrices to tibbles
-  tblPar <- as_tibble(json_data[[i]])
+  tblPar <- as_tibble(parcel_data[[i]])
   tblFront <- as_tibble(parcelFront[[i]])
   tblModFront <- as_tibble(modParcelFront[[i]])
   tblClosestRoad <- as_tibble(closestRoad[[i]])
@@ -667,15 +540,6 @@ checkCorner <- function(i){
       geom_label_repel(data = tblFront, aes(V1, V2, label = rownames(tblFront))) +
       coord_cartesian(xlim = c(XMin, XMax), ylim = c(YMin, YMax))
   )
-}
-
-# Troubleshooting
-checkCorner <- function(i){
-  eqscplot(json_data[[i]],type='l', tol=0.9)
-  points(parcelFront[[i]], pch = 1)
-  points(modParcelFront[[i]], pch = 16)
-  points(closestRoad[[i]])
-  lines(roadway[[i]])
 }
 
 # Function
@@ -730,8 +594,8 @@ idEdges <- function(par, indF){
 }
 
 # Run idEdges on all parcels
-parcelEdges <- vector("list", len_json)
-for (i in 1:len_json){
+parcelEdges <- vector("list", numPar)
+for (i in 1:numPar){
   # print(i)
   par <- unique(parcel_data[[i]])
   par <- rbind(par, par[1,])
@@ -765,76 +629,6 @@ removeFront <- function(par, bldg, front){
   r_slope <- c(cos(slope),sin(slope))
   return (c(pt, r_slope))
   
-  #### NOT USED ANYMORE
-  # # For each line of the parcel, check if intersects with front cut line
-  # # Store (1) index of parcel side and (2) intersection point on parcel
-  # # Usually will be two intersections, but may be more if unusual shape
-  # parcelIndex <- vector("double")
-  # parcelPoints <- array(dim = c(0,2))
-  # for (i in 1:(dim(par)[1]-1)){
-  #   p1 <- par[i,]
-  #   p2 <- par[i+1,]
-  #   if (!is.null(checkIntersect(p1,p2,pt,ang))){
-  #     print(i)
-  #     parcelIndex <- c(parcelIndex,i)
-  #     parcelPoints <- rbind(parcelPoints,checkIntersect(p1,p2,pt,ang))
-  #   }
-  # }
-  # print(parcelIndex)
-  # # Normal case: two intersection points
-  # if (length(parcelIndex) == 2){
-  #   opt1 <- array(dim=c(20,2))
-  #   opt2 <- array(dim=c(20,2))
-  #   A <- parcelIndex[1]
-  #   B <- parcelIndex[2]
-  #   # Option 1: loop from lower index (A) to higher index (B)
-  #   opt1[1,] <- parcelPoints[1,]    # point A
-  #   index <- 2
-  #   for (i in (A+1):B){
-  #     opt1[index,] <- par[i,]
-  #     index <- index + 1
-  #   }
-  #   opt1[index,] <- parcelPoints[2,] # point B
-  #   index <- index + 1
-  #   opt1[index,] <- parcelPoints[1,]  # back to point A
-  #   opt1 <- opt1[which(rowSums(opt1)>0),]
-  #   opt1 <- unique(opt1)
-  #   opt1 <- rbind(opt1, opt1[1,])
-  #   # Option 2: loop from higher index (B) back to lower index (A)
-  #   opt2[1,] <- parcelPoints[2,] # point B
-  #   index <- 2
-  #   i <- B + 1
-  #   if (i > dim(par)[1]){   # If B is the last index, adjust i to 1
-  #     i <- 1
-  #   }
-  #   while (i != A){
-  #     opt2[index,] <- par[i,]
-  #     i <- i + 1
-  #     if (i > dim(par)[1]){
-  #       i <- 1
-  #     }
-  #   }
-  #   opt2[index,] <- parcelPoints[1,] # point A
-  #   index <- index + 1
-  #   opt2[index,] <- parcelPoints[2,] # point B
-  #   opt2 <- opt2[which(rowSums(opt2)>0),]
-  #   opt2 <- unique(opt2)
-  #   opt2 <- rbind(opt2, opt2[1,])
-  #   # Check if option 1 goes through front
-  #   for (i in 1:dim(opt1)[1]){
-  #     # if (isFront1(opt1[i,])){   
-  #     #   return (opt2)
-  #     # }
-  #     for (j in 1:dim(front)[1]){
-  #       if (isTRUE(all.equal(opt1[i,],front[j,]))){  # If any point is on the front, return option 2
-  #         return (opt2)
-  #       }
-  #     }
-  #   }
-  #   return (opt1)
-  # }
-  # # Other cases: deal with later
-  # else {print("Abnormal number of intersections")}
 }
 
 # Helper function: normal distance between a point and a line segment
@@ -842,34 +636,6 @@ removeFront <- function(par, bldg, front){
 # 
 # https://en.wikipedia.org/wiki/Distance_from_a_point_to_a_line#Line_defined_by_two_points
 perpDist <- function(x, y, x1, y1, x2, y2){
-  # A <- x - x1
-  # B <- y - y1
-  # C <- x2 - x1
-  # D <- y2 - y1
-  # dot <- A * C + B * D
-  # len_sq <- C * C + D * D
-  # param <- -1
-  # if (len_sq != 0){  # in case of 0 length line
-  #   param <- dot / len_sq
-  # }
-  # xx <- 0
-  # yy <- 0
-  # if (param < 0){
-  #   xx <- x2
-  #   yy <- y1
-  # }
-  # else if (param > 1){
-  #   xx <- x2
-  #   yy <- y2
-  # }
-  # else{
-  #   xx = x1 + param * C
-  #   yy = y1 + param * D
-  # }
-  # dx <- x - xx
-  # dy <- y - yy
-  # return (sqrt(dx * dx + dy * dy))
-  
   return (abs((y2-y1) * x - (x2-x1) * y + x2*y1 - y2*x1)/sqrt((y2 - y1)^2 + (x2 - x1)^2))
 }
 
@@ -1093,300 +859,303 @@ buffer <- function(par, ind, dist){
 
 
 # Find which parcels are landlocked. These will need front edges manually identified
-landlocked <- vector("logical", len_json - sum(checkFront))
+landlocked <- vector("logical", numPar - sum(checkFront))
 index <- 1
-for (i in 1:len_json){
+for (i in 1:numPar){
   if (!checkFront[i]){
     landlocked[index] <- i
     index <- index + 1
   }
 }
-landlockedAPNs <- vector("logical", len_json - sum(checkFront))
-for (i in 1:(len_json - sum(checkFront))){
+landlockedAPNs <- vector("logical", numPar - sum(checkFront))
+for (i in 1:(numPar - sum(checkFront))){
   print(i)
-  landlockedAPNs[i] <- full_json_data$APN[[landlocked[i]]]
+  landlockedAPNs[i] <- parcels$properties.APN[[landlocked[i]]]
 }
 write_csv(as.data.frame(landlockedAPNs), "landlockedAPNs.csv")
 
+
+###################################################################
+############ OLD CODE #############################################
 # Check if merge ring cuts at the front
 # Inputs two points (x, y coordinate 1 x 2 vector)
 # Outputs a boolean
-isFront <- function(point1, point2){
-  # Check if point1 matches json_block_data
-  index <- findInterval(point1[1], json_block_points[,1])
-  while(isTRUE(all.equal(point1[1], json_block_points[index,1]))){         # search all coordinates w/ same X coord
-    if(isTRUE(all.equal(point1[2], json_block_points[index,2]))){return(TRUE)}
-    index <- index + 1
-  }
-  # Check if point2 matches json_block_data
-  index <- findInterval(point2[1], json_block_points[,1])
-  while(isTRUE(all.equal(point2[1], json_block_points[index,1]))){         # search all coordinates w/ same X coord
-    if(isTRUE(all.equal(point2[2], json_block_points[index,2]))){return(TRUE)}
-    index <- index + 1
-  }
-  # for (i in 1:json_block_length){
-  #   if(isTRUE(all.equal(point1, json_block_points[i,])) || isTRUE(all.equal(point2, json_block_points[i,]))){
-  #     return(TRUE)
-  #   }
-  # }
-  # If nothing returns true, return false
-  return(FALSE)
-}
+# isFront2 <- function(point1, point2){
+#   # Check if point1 matches blocks
+#   index <- findInterval(point1[1], blockPts[,1])
+#   while(isTRUE(all.equal(point1[1], blockPts[index,1]))){         # search all coordinates w/ same X coord
+#     if(isTRUE(all.equal(point1[2], blockPts[index,2]))){return(TRUE)}
+#     index <- index + 1
+#   }
+#   # Check if point2 matches blocks
+#   index <- findInterval(point2[1], blockPts[,1])
+#   while(isTRUE(all.equal(point2[1], blockPts[index,1]))){         # search all coordinates w/ same X coord
+#     if(isTRUE(all.equal(point2[2], blockPts[index,2]))){return(TRUE)}
+#     index <- index + 1
+#   }
+#   # for (i in 1:json_block_length){
+#   #   if(isTRUE(all.equal(point1, blockPts[i,])) || isTRUE(all.equal(point2, blockPts[i,]))){
+#   #     return(TRUE)
+#   #   }
+#   # }
+#   # If nothing returns true, return false
+#   return(FALSE)
+# }
 
-# ring1 and ring2 are arrays of dim [x, 2] AND/OR lists of already merged rings
-# Function is recursively to merge rings if list(s) is passed as an input
-# returns list of merged rings
-merge_rings <- function(ringA, ringB, frontCut = FALSE){ 
-  result <- list()
-  if (typeof(ringA) == "list"){
-    indexA <- length(ringA)
-  } else{indexA <- 1}
-  if (typeof(ringB) == "list"){
-    indexB <- length(ringB)
-  } else{indexB <- 1}
-  
-  # Case 1: ringA is a list, ringB is an array
-  if (indexA > 1 && indexB == 1){   #check if there are any lists
-    for(j in 1:indexA){
-      result <- append(result, merge_rings(ringA[[j]], ringB, FALSE))
-    }
-  } 
-  
-  # Case 2: ringB is a list, ringA is an array
-  else if (indexA == 1 && indexB > 1){
-    for(k in 1:indexB){
-      result <- append(result, merge_rings(ringA, ringB[[k]], FALSE))
-    }
-  }
-  
-  # Case 3: ringA and ringB are both lists
-  else if (indexA > 1 && indexB > 1){
-    for(j in 1:indexA){
-      for(k in 1:indexB){
-        result <- append(result, merge_rings(ringA[[j]], ringB[[k]], FALSE))
-      }
-    }
-  }
-  # Base Case: ringA and ringB are arrays
-  # ring2 is the polygon with fewer points
-  # ring1 is the polygon with more points
-  else{
-    if (length(ringA[,1]) <= length(ringB[,1])){
-      ring2 <- ringA
-      ring1 <- ringB
-    } else {
-      ring1 <- ringA
-      ring2 <- ringB
-    }
-    len_r1 <- length(ring1[,1])-1  #don't need to consider last point, which is the same as point 1
-    len_r2 <- length(ring2[,1])-1  #don't need to consider last point, which is the same as point 1
-    
-    # find all pairs of closest points
-    ring2_closest <- vector("double", len_r2)
-    # cycle through each ring1 point
-    for(m in 1:len_r2){
-      #returns index of closest ring2 point to current ring1 point
-      min_dist <- 1e99 #start with a very high number
-      min_index <- 0   #start with index 0 (not in the index)
-      for (n in 1:len_r1) {
-        dx <- abs(ring2[m,1]-ring1[n,1])
-        dy <- abs(ring2[m,2]-ring1[n,2])
-        dist <- sqrt(dx*dx+dy*dy)
-        if (dist < min_dist) {
-          min_dist <- dist
-          min_index <- n
-        }
-      }
-      # saves index of closest ring2 point
-      ring2_closest[m] <- min_index
-    }
-    cutIndex <- vector(mode = "logical", len_r2)
-    cutIndex[] <- TRUE
-    if (frontCut){
-      # ID the indices for points on ring1 and ring2 for the cuts after confirming that it goes through the front
-      cutIndex[] <- FALSE
-      # Filter index to get cuts that go through the front
-      for(m in 1:len_r2){
-        # index1 = m
-        point1 <- ring2[m,]
-        index2 <- ring2_closest[m]
-        point2 <- ring1[ring2_closest[m],]
-        if (isFront(point1, point2)) {
-          cutIndex[m] <- TRUE
-        }
-      }
-      # Remove empty rows
-      if(sum(cutIndex) == 0){                     # If no matches for front cut, switch to no front cut
-        frontCut <- FALSE
-        cutIndex[] <- TRUE                        # 
-      }
-    }
-    
-    result <- vector("list", len_r2)
-    for(i in 1:len_r2){
-      if(cutIndex[i] == FALSE){next}
-      # merge rings for 1 iteration
-      ring_merge <- cbind(vector("double", len_r1+len_r2+3),vector("double", len_r1+len_r2+3))
-      index_merge <- 1   # keep track of index in ring_merge
-      index2 <- i        # keep track of index in ring2
-      # add ring1 to ring_merge
-      for(m in 1:len_r2){
-        ring_merge[index_merge,1] <- ring2[index2,1]  # transfer value
-        ring_merge[index_merge,2] <- ring2[index2,2]  # transfer value
-        index2 <- index2 %% len_r2 + 1 #increment, if at end of index, loops back to 1
-        index_merge <- index_merge + 1 #increment, no need to loop back
-      }
-      #add last point to close ring2
-      ring_merge[index_merge,1] <- ring2[index2,1]
-      ring_merge[index_merge,2] <- ring2[index2,2]
-      index_merge <- index_merge + 1
-      #add ring2 to ring_merge
-      index1 <- ring2_closest[index2]
-      for(n in 1:len_r1){
-        ring_merge[index_merge,1] <- ring1[index1,1]  # transfer value
-        ring_merge[index_merge,2] <- ring1[index1,2]  # transfer value
-        index1 <- index1 - 1 #increment, if at end of index, loops back to 1
-        if (index1 == 0) {index1 <- len_r1}
-        index_merge <- index_merge + 1 #increment, no need to loop back
-      }
-      ring_merge[index_merge,1] <- ring1[index1,1]
-      ring_merge[index_merge,2] <- ring1[index1,2]
-      index_merge <- index_merge + 1
-      ring_merge[index_merge,1] <- ring2[index2,1]
-      ring_merge[index_merge,2] <- ring2[index2,2]
-      result[[i]] <- ring_merge
-    }
-    if(frontCut){                   # remove empty indices
-      result <- result[cutIndex]
-    }
-    if (length(result) == 1){return(result[[1]])} else{return(result)}
-  }
-  if (length(result) == 1){return(result[[1]])} else{return(result)}
-}
+# # ring1 and ring2 are arrays of dim [x, 2] AND/OR lists of already merged rings
+# # Function is recursively to merge rings if list(s) is passed as an input
+# # returns list of merged rings
+# merge_rings <- function(ringA, ringB, frontCut = FALSE){ 
+#   result <- list()
+#   if (typeof(ringA) == "list"){
+#     indexA <- length(ringA)
+#   } else{indexA <- 1}
+#   if (typeof(ringB) == "list"){
+#     indexB <- length(ringB)
+#   } else{indexB <- 1}
+#   
+#   # Case 1: ringA is a list, ringB is an array
+#   if (indexA > 1 && indexB == 1){   #check if there are any lists
+#     for(j in 1:indexA){
+#       result <- append(result, merge_rings(ringA[[j]], ringB, FALSE))
+#     }
+#   } 
+#   
+#   # Case 2: ringB is a list, ringA is an array
+#   else if (indexA == 1 && indexB > 1){
+#     for(k in 1:indexB){
+#       result <- append(result, merge_rings(ringA, ringB[[k]], FALSE))
+#     }
+#   }
+#   
+#   # Case 3: ringA and ringB are both lists
+#   else if (indexA > 1 && indexB > 1){
+#     for(j in 1:indexA){
+#       for(k in 1:indexB){
+#         result <- append(result, merge_rings(ringA[[j]], ringB[[k]], FALSE))
+#       }
+#     }
+#   }
+#   # Base Case: ringA and ringB are arrays
+#   # ring2 is the polygon with fewer points
+#   # ring1 is the polygon with more points
+#   else{
+#     if (length(ringA[,1]) <= length(ringB[,1])){
+#       ring2 <- ringA
+#       ring1 <- ringB
+#     } else {
+#       ring1 <- ringA
+#       ring2 <- ringB
+#     }
+#     len_r1 <- length(ring1[,1])-1  #don't need to consider last point, which is the same as point 1
+#     len_r2 <- length(ring2[,1])-1  #don't need to consider last point, which is the same as point 1
+#     
+#     # find all pairs of closest points
+#     ring2_closest <- vector("double", len_r2)
+#     # cycle through each ring1 point
+#     for(m in 1:len_r2){
+#       #returns index of closest ring2 point to current ring1 point
+#       min_dist <- 1e99 #start with a very high number
+#       min_index <- 0   #start with index 0 (not in the index)
+#       for (n in 1:len_r1) {
+#         dx <- abs(ring2[m,1]-ring1[n,1])
+#         dy <- abs(ring2[m,2]-ring1[n,2])
+#         dist <- sqrt(dx*dx+dy*dy)
+#         if (dist < min_dist) {
+#           min_dist <- dist
+#           min_index <- n
+#         }
+#       }
+#       # saves index of closest ring2 point
+#       ring2_closest[m] <- min_index
+#     }
+#     cutIndex <- vector(mode = "logical", len_r2)
+#     cutIndex[] <- TRUE
+#     if (frontCut){
+#       # ID the indices for points on ring1 and ring2 for the cuts after confirming that it goes through the front
+#       cutIndex[] <- FALSE
+#       # Filter index to get cuts that go through the front
+#       for(m in 1:len_r2){
+#         # index1 = m
+#         point1 <- ring2[m,]
+#         index2 <- ring2_closest[m]
+#         point2 <- ring1[ring2_closest[m],]
+#         if (isFront(point1, point2)) {
+#           cutIndex[m] <- TRUE
+#         }
+#       }
+#       # Remove empty rows
+#       if(sum(cutIndex) == 0){                     # If no matches for front cut, switch to no front cut
+#         frontCut <- FALSE
+#         cutIndex[] <- TRUE                        # 
+#       }
+#     }
+#     
+#     result <- vector("list", len_r2)
+#     for(i in 1:len_r2){
+#       if(cutIndex[i] == FALSE){next}
+#       # merge rings for 1 iteration
+#       ring_merge <- cbind(vector("double", len_r1+len_r2+3),vector("double", len_r1+len_r2+3))
+#       index_merge <- 1   # keep track of index in ring_merge
+#       index2 <- i        # keep track of index in ring2
+#       # add ring1 to ring_merge
+#       for(m in 1:len_r2){
+#         ring_merge[index_merge,1] <- ring2[index2,1]  # transfer value
+#         ring_merge[index_merge,2] <- ring2[index2,2]  # transfer value
+#         index2 <- index2 %% len_r2 + 1 #increment, if at end of index, loops back to 1
+#         index_merge <- index_merge + 1 #increment, no need to loop back
+#       }
+#       #add last point to close ring2
+#       ring_merge[index_merge,1] <- ring2[index2,1]
+#       ring_merge[index_merge,2] <- ring2[index2,2]
+#       index_merge <- index_merge + 1
+#       #add ring2 to ring_merge
+#       index1 <- ring2_closest[index2]
+#       for(n in 1:len_r1){
+#         ring_merge[index_merge,1] <- ring1[index1,1]  # transfer value
+#         ring_merge[index_merge,2] <- ring1[index1,2]  # transfer value
+#         index1 <- index1 - 1 #increment, if at end of index, loops back to 1
+#         if (index1 == 0) {index1 <- len_r1}
+#         index_merge <- index_merge + 1 #increment, no need to loop back
+#       }
+#       ring_merge[index_merge,1] <- ring1[index1,1]
+#       ring_merge[index_merge,2] <- ring1[index1,2]
+#       index_merge <- index_merge + 1
+#       ring_merge[index_merge,1] <- ring2[index2,1]
+#       ring_merge[index_merge,2] <- ring2[index2,2]
+#       result[[i]] <- ring_merge
+#     }
+#     if(frontCut){                   # remove empty indices
+#       result <- result[cutIndex]
+#     }
+#     if (length(result) == 1){return(result[[1]])} else{return(result)}
+#   }
+#   if (length(result) == 1){return(result[[1]])} else{return(result)}
+# }
 
 # Create recursive function to unpack array with more than 2 polygons
 # Takes an array
 # Returns a list of merged arrays
 # Account for errors
-unpackArray <-local({
-  function(arr) {
-    dim <- dim(arr)    # get length of first dimension of array
-    if(length(dim) > 3){
-      print("Error. Nonconforming array")
-      return()
-    }
-    if(dim[3] == 2){       # add first poly
-      result <- arr[1,,]
-    } else{
-      print("Error")
-      return()
-    }
-    for(i in 2:dim[1]){       # go through list
-      # check if element is a list or array
-      result <- merge_rings(result, arr[i,,], TRUE)
-    }
-    return(result)
-  }
-})
-
-
-
-# Create recursive function to unpack list elements
-# Takes a list (maybe of more lists)
-# Returns a list of merged arrays
-unpackList <-local({
-  function(lst) {
-    len <- length(lst)    # get length of list
-    if(typeof(lst[[1]]) == "list"){
-      result <- unpackList(lst[[1]])  # initialize result, recursively call function
-    } else if (typeof(lst[[1]]) == "double"){
-      arr <- drop(lst[[1]])
-      if (length(dim(arr)) == 2 && dim(arr)[2] == 2){   # check that array has R x 2 dimensions
-        result <- arr
-      }
-    } else{
-      print("Error")
-      return()
-    }
-    for(i in 2:len){       # go through list
-      # check if element is a list or array
-      if (typeof(lst[[i]]) == "list"){
-        result <- merge_rings(result, unpackList(lst[[i]]), TRUE) # merge onto existing result, recursively call function
-      } else if (typeof(lst[[i]]) == "double"){
-        arr <- drop(lst[[i]])
-        if (length(dim(arr)) == 2 && dim(arr)[2] == 2){   # check that array has R x 2 dimensions
-          result <- merge_rings(result, arr, TRUE)                # merge onto existing result
-        } 
-      } else{
-        print("Error")
-        return()
-      }
-    }
-    return(result)
-  }
-})
-
-
-# convert JSON data into merged polygons
-all_merged_rings <- vector("list", len_json)
-manualJSON <- array(dim = c(len_json, 2))
-jsonIndex <- 1
-for(a in 1:len_json) {
-  all_merged_rings[[a]] <- NA
-  print(a)
-  # Check the type of data: double (aka array) or list
-  arr <- drop(json_data[[a]]) # gets rid of dimensions of 1 length
-  if (typeof(json_data[[a]]) == "double") { # is an array [a x b x c]
-    if(length(dim(arr)) == 3 && dim(arr)[1] == 2 && dim(arr)[3] == 2) { # if array is [2 x b x 2]
-      ring1 <- arr[1,,]
-      ring2 <- arr[2,,]
-      all_merged_rings[[a]] <- merge_rings(ring1,ring2,TRUE)
-      # all_merged_rings[[a]] <- 1
-    }
-    else if (length(dim(arr)) == 2 && dim(arr)[2] == 2){    # if is just one polygon, return that polygon
-      all_merged_rings[[a]] <- arr
-    }
-    else if (length(dim(arr)) == 3 && dim(arr)[1] > 2 && dim(arr)[3] == 2){ # if array is [a x b x 2] where a > 2
-      all_merged_rings[[a]] <- unpackArray(arr)
-    }
-    else {
-      manualJSON[jsonIndex, 1] <- a
-      manualJSON[jsonIndex, 2] <- "nonconforming array"
-      jsonIndex <- jsonIndex + 1
-    }                                  
-  } 
-  else if (typeof(json_data[[a]]) == "list") {
-    if (length(json_data[[a]]) > 5){
-      manualJSON[jsonIndex, 1] <- a
-      manualJSON[jsonIndex, 2] <- "long list"
-      jsonIndex <- jsonIndex + 1
-    } else{all_merged_rings[[a]] <- unpackList(json_data[[a]])}
-  }
-  else{
-    manualJSON[jsonIndex, 1] <- a
-    manualJSON[jsonIndex, 2] <- "other error"
-    jsonIndex <- jsonIndex + 1
-  }
-}
+# unpackArray <-local({
+#   function(arr) {
+#     dim <- dim(arr)    # get length of first dimension of array
+#     if(length(dim) > 3){
+#       print("Error. Nonconforming array")
+#       return()
+#     }
+#     if(dim[3] == 2){       # add first poly
+#       result <- arr[1,,]
+#     } else{
+#       print("Error")
+#       return()
+#     }
+#     for(i in 2:dim[1]){       # go through list
+#       # check if element is a list or array
+#       result <- merge_rings(result, arr[i,,], TRUE)
+#     }
+#     return(result)
+#   }
+# })
+# 
+# 
+# 
+# # Create recursive function to unpack list elements
+# # Takes a list (maybe of more lists)
+# # Returns a list of merged arrays
+# unpackList <-local({
+#   function(lst) {
+#     len <- length(lst)    # get length of list
+#     if(typeof(lst[[1]]) == "list"){
+#       result <- unpackList(lst[[1]])  # initialize result, recursively call function
+#     } else if (typeof(lst[[1]]) == "double"){
+#       arr <- drop(lst[[1]])
+#       if (length(dim(arr)) == 2 && dim(arr)[2] == 2){   # check that array has R x 2 dimensions
+#         result <- arr
+#       }
+#     } else{
+#       print("Error")
+#       return()
+#     }
+#     for(i in 2:len){       # go through list
+#       # check if element is a list or array
+#       if (typeof(lst[[i]]) == "list"){
+#         result <- merge_rings(result, unpackList(lst[[i]]), TRUE) # merge onto existing result, recursively call function
+#       } else if (typeof(lst[[i]]) == "double"){
+#         arr <- drop(lst[[i]])
+#         if (length(dim(arr)) == 2 && dim(arr)[2] == 2){   # check that array has R x 2 dimensions
+#           result <- merge_rings(result, arr, TRUE)                # merge onto existing result
+#         } 
+#       } else{
+#         print("Error")
+#         return()
+#       }
+#     }
+#     return(result)
+#   }
+# })
+# 
+# 
+# # convert JSON data into merged polygons
+# all_merged_rings <- vector("list", numPar)
+# manualJSON <- array(dim = c(numPar, 2))
+# jsonIndex <- 1
+# for(a in 1:numPar) {
+#   all_merged_rings[[a]] <- NA
+#   print(a)
+#   # Check the type of data: double (aka array) or list
+#   arr <- drop(parcel_data[[a]]) # gets rid of dimensions of 1 length
+#   if (typeof(parcel_data[[a]]) == "double") { # is an array [a x b x c]
+#     if(length(dim(arr)) == 3 && dim(arr)[1] == 2 && dim(arr)[3] == 2) { # if array is [2 x b x 2]
+#       ring1 <- arr[1,,]
+#       ring2 <- arr[2,,]
+#       all_merged_rings[[a]] <- merge_rings(ring1,ring2,TRUE)
+#       # all_merged_rings[[a]] <- 1
+#     }
+#     else if (length(dim(arr)) == 2 && dim(arr)[2] == 2){    # if is just one polygon, return that polygon
+#       all_merged_rings[[a]] <- arr
+#     }
+#     else if (length(dim(arr)) == 3 && dim(arr)[1] > 2 && dim(arr)[3] == 2){ # if array is [a x b x 2] where a > 2
+#       all_merged_rings[[a]] <- unpackArray(arr)
+#     }
+#     else {
+#       manualJSON[jsonIndex, 1] <- a
+#       manualJSON[jsonIndex, 2] <- "nonconforming array"
+#       jsonIndex <- jsonIndex + 1
+#     }                                  
+#   } 
+#   else if (typeof(parcel_data[[a]]) == "list") {
+#     if (length(parcel_data[[a]]) > 5){
+#       manualJSON[jsonIndex, 1] <- a
+#       manualJSON[jsonIndex, 2] <- "long list"
+#       jsonIndex <- jsonIndex + 1
+#     } else{all_merged_rings[[a]] <- unpackList(parcel_data[[a]])}
+#   }
+#   else{
+#     manualJSON[jsonIndex, 1] <- a
+#     manualJSON[jsonIndex, 2] <- "other error"
+#     jsonIndex <- jsonIndex + 1
+#   }
+# }
 
 
 plotrect <- function(lr1){
   ## convert rectangle output to coordinates
-  
+
   ## zero-centred
   pts = cbind(
     c(lr1$width,lr1$width,-lr1$width,-lr1$width)/2,
     c(lr1$height,-lr1$height,-lr1$height,lr1$height)/2
   )
-  
+
   ## rotate
   r = rmat(lr1$ang)
   xy = pts %*% r
-  
+
   ## add centre offsets
   xy[,1] = xy[,1] + lr1$cx
   xy[,2] = xy[,2] + lr1$cy
-  
+
   ## repeat last point so output is a closed polygon
   rbind(xy,xy[1,])
 }
@@ -1436,7 +1205,7 @@ count_success <- 0
 count_error <- 0
 error_poly <- array(0, dim=c(1000,2))
 index_poly <- 1
-listMaxRect <- vector("list", len_json)
+listMaxRect <- vector("list", numPar)
 ctx = initjs()
 for(a in 1:5051) {
   ## process list types
