@@ -33,7 +33,7 @@ ord <- sort.list(parcels$properties.APN)
 parcels <- parcels[ord,]
 numPar <- dim(parcels)[1]
 rownames(parcels) <- 1:numPar
-parcel_data <- parcels$geometry.coordinates
+parcel <- parcels$geometry.coordinates
 
 ### roads
 file_roads <- "epa_roads_adj.geojson"
@@ -110,35 +110,36 @@ removeCollinear <- function(arr){
 
 # Remove collinear points from parcels
 for (i in 1:numPar){
-  arr <- drop(parcel_data[[i]])
-  parcel_data[[i]] <- removeCollinear(arr)
+  arr <- drop(parcel[[i]])
+  parcel[[i]] <- removeCollinear(arr)
 }
 
 # Find number of landlocked parcels (all points are touching another parcel)
 # First, pull all the coordinates for the first polygon for each parcel
 checkFront <- vector("logical", numPar)   # Keep track of whether a parcel touches the front
 numFront <- vector("double", numPar)      # Keep track of number of points that touch the front
-indexFront <- vector("list", numPar)      # Keep track of index of points that touch the front
+# indexFront <- vector("list", numPar)      # Keep track of index of points that touch the front
 for (i in 1:numPar){
   print(i)
-  if (typeof(parcel_data[[i]]) == "list"){
-    poly <- unique(drop(parcel_data[[i]][[1]]))
+  if (typeof(parcel[[i]]) == "list"){
+    poly <- unique(drop(parcel[[i]][[1]]))
   }
-  else if (typeof(parcel_data[[i]]) == "double"){
-    # if (length(dim(parcel_data[[i]])) > 3){
-      # poly <- drop(parcel_data[[i]])[1,,]
-      poly <- unique(drop(parcel_data[[i]]))
+  else if (typeof(parcel[[i]]) == "double"){
+    # if (length(dim(parcel[[i]])) > 3){
+      # poly <- drop(parcel[[i]])[1,,]
+      poly <- unique(drop(parcel[[i]]))
     # }
-    # else{poly <- unique(parcel_data[[i]][1,,])}
+    # else{poly <- unique(parcel[[i]][1,,])}
   }
   else{
     break
   }
-  indexFront[[i]] <- vector("logical", dim(poly)[1])
+  # poly <- rbind(poly, poly[1,])
+  parcel[[i]] <- cbind(poly, vector(length = dim(poly)[1]))
   for (j in 1:dim(poly)[1]){
     if (isFront1(poly[j,])){
       checkFront[i] <- TRUE
-      indexFront[[i]][j] <- TRUE
+      parcel[[i]][j,3] <- TRUE
       numFront[i] <- numFront[i] + 1
     }
   }
@@ -150,110 +151,154 @@ table(numFront)
 # Front indices may be out of order if the polygon starting point is in the middle of the front
 chunks <- vector("double", numPar)              # chunks of points marked as front
 false_chunks <- vector("double", numPar)        # chunks of points not marked as front (used to ID problems)
-offsetFront <- vector("double", numPar)         # what number of points to move to the back
-deleteFront <- vector("double", numPar)         # what index point to remove
+# offsetFront <- vector("double", numPar)         # what number of points to move to the back
+# deleteFront <- vector("double", numPar)         # what index point to remove
 chunks2 <- vector("double", numPar)              # chunks of points marked as front
 false_chunks2 <- vector("double", numPar)        # chunks of points not marked as front (used to ID problems)
+chunks3 <- vector("double", numPar)              # chunks of points marked as front
+false_chunks3 <- vector("double", numPar)        # chunks of points not marked as front (used to ID problems)
 for (i in 1:numPar){
+  print(i)
   preVal <- FALSE
-  arr <- indexFront[[i]]
-  for (j in 1:length(arr)){
-    if (j == 1 && arr[j]){chunks[i] <- chunks[i] + 1}
-    else if (j == 1 && arr[j] == FALSE){false_chunks[i] <- false_chunks[i] + 1}
-    else if (preVal == FALSE && arr[j]){chunks[i] <- chunks[i] + 1}
-    else if (preVal && arr[j] == FALSE){false_chunks[i] <- false_chunks[i] + 1}
-    preVal <- arr[j]
+  arr <- parcel[[i]]
+  # print(parcel[[i]])
+  # print(arr)
+  for (j in 1:dim(arr)[1]){
+    if (j == 1 && arr[j,3] == 1){chunks[i] <- chunks[i] + 1}
+    else if (j == 1 && arr[j,3] == 0){false_chunks[i] <- false_chunks[i] + 1}
+    else if (preVal == FALSE && arr[j,3] == 1){chunks[i] <- chunks[i] + 1}
+    else if (preVal && arr[j,3] == 0){false_chunks[i] <- false_chunks[i] + 1}
+    preVal <- arr[j,3]
   }
   # Track which parcel's front vertices need reordering
   # If false_chunks < chunks, reorder by length of first true chunk
+  offset <- 0
   if (false_chunks[i] < chunks[i]){
-    for (j in 1:length(arr)){
-      if (!arr[j]){
+    for (j in dim(arr)[1]:1){
+      if (arr[j,3] == 0){
         break
       }
-      offsetFront[i] <- offsetFront[i] + 1
+      offset <- offset + 1
     }
-    indexFront[[i]] <- c(indexFront[[i]][-1:-offsetFront[i]], indexFront[[i]][1:offsetFront[i]])
+    
+    # Reorder parcel
+    arr <- rbind(arr[-1:-j,], arr[1:j,])
   }
+  
+  # Second check  
   preVal <- FALSE
-  for (j in 1:length(arr)){
-    if (j == 1 && indexFront[[i]][j]){chunks2[i] <- chunks2[i] + 1}
-    else if (j == 1 && indexFront[[i]][j] == FALSE){false_chunks2[i] <- false_chunks2[i] + 1}
-    else if (preVal == FALSE && indexFront[[i]][j]){chunks2[i] <- chunks2[i] + 1}
-    else if (preVal && indexFront[[i]][j] == FALSE){false_chunks2[i] <- false_chunks2[i] + 1}
-    preVal <- indexFront[[i]][j]
+  for (j in 1:dim(arr)[1]){
+    if (j == 1 && arr[j,3] == 1){chunks2[i] <- chunks2[i] + 1}
+    else if (j == 1 && arr[j,3] == 0){false_chunks2[i] <- false_chunks2[i] + 1}
+    else if (preVal == FALSE && arr[j,3] == 1){chunks2[i] <- chunks2[i] + 1}
+    else if (preVal && arr[j,3] == 0){false_chunks2[i] <- false_chunks2[i] + 1}
+    preVal <- arr[j,3]
   }
+  
+  # New code
+  offset <- 0
+  for (j in 1:dim(arr)[1]){
+    if (arr[j,3] == 1){
+      break
+    }
+    offset <- offset + 1
+  }
+  if (j != 1) {arr <- rbind(arr[-1:-offset,], arr[1:offset,])}
+
   if (chunks2[i] == 2){
-    for (j in 2:(length(arr)-1)){
-      if (isTRUE(indexFront[[i]][j] && (!indexFront[[i]][j-1] && !indexFront[[i]][j+1]))){
-        deleteFront[i] <- j
+    for (j in 2:(dim(arr)[1]-1)){
+      if (isTRUE(arr[j,3] == 1 && (arr[j-1,3] == 0 && arr[j+1,3] == 0))){
+        arr[j,3] <- 0
       }
     }
   }
+  preVal <- FALSE
+  for (j in 1:dim(arr)[1]){
+    if (j == 1 && arr[j,3] == 1){chunks3[i] <- chunks3[i] + 1}
+    else if (j == 1 && arr[j,3] == 0){false_chunks3[i] <- false_chunks3[i] + 1}
+    else if (preVal == FALSE && arr[j,3] == 1){chunks3[i] <- chunks3[i] + 1}
+    else if (preVal && arr[j,3] == 0){false_chunks3[i] <- false_chunks3[i] + 1}
+    preVal <- arr[j,3]
+  }
+  parcel[[i]] <- rbind(arr, arr[1,])
+  parcel[[i]][dim(parcel[[i]])[1],3] <- 0
 }
 
 table(chunks)
 table(false_chunks)
 table(chunks2)
 table(false_chunks2)
-table(deleteFront)
+table(chunks3)
+table(false_chunks3)
 
 View(cbind(chunks, false_chunks))
 View(cbind(chunks2, false_chunks2))
 
-# Extract parcel front points
-parcelFront <- vector(mode = "list", numPar)     # Keep track of the points that touch the front
-# for (i in 1:numPar){
-for (i in 1:numPar){
-  if (checkFront[i]){   # Check whether we need to save any points
-    parcelFront[[i]] <- array(dim = c(numFront[i],2))
-    index <- 1
-    if (typeof(parcel_data[[i]]) == "list"){
-      poly <- unique(drop(parcel_data[[i]][[1]]))
+# Function to extract parcel front points
+parcelFront <- function(index, type = "Original"){
+  if (type == "Original"){
+    if (checkFront[index]){
+      return (parcel[[index]][(parcel[[index]][,3] == 1),1:2])
     }
-    else if (typeof(parcel_data[[i]]) == "double"){
-      # if (length(dim(parcel_data[[i]])) > 3){
-        # poly <- drop(parcel_data[[i]])[1,,]
-        poly <- unique(drop(parcel_data[[i]]))
-      # }
-      # else{poly <- unique(parcel_data[[i]][1,,])}
-    }
-    for (j in 1:(dim(poly)[1])){
-      if (isFront1(poly[j,])){
-        parcelFront[[i]][index,] <- poly[j,]
-        index <- index + 1
-      }
+    else{
+      print("This parcel has no front points. User needs to manually identify.")
+      return (NULL)
     }
   }
-  if (deleteFront[i] > 0){
-    parcelFront[[i]] <- parcelFront[[i]][-deleteFront[i],]
+  else if (type == "Mod"){
+    if (checkFront[index]){
+      return (modParcel[[index]][(modParcel[[index]][,3] == 1),1:2])
+    }
+    else{
+      print("This parcel has no front points. User needs to manually identify.")
+      return (NULL)
+    }
   }
-  # Check if indices need rearranging
-  if (offsetFront[i] > 0){
-    parcelFront[[i]] <- rbind(parcelFront[[i]][-1:-offsetFront[i], ], parcelFront[[i]][1:offsetFront[i], ])
+  else{
+    print("Type is wrong. Enter either Original or Mod")
+    return (NULL)
   }
 }
 
+# Function to plot parcel with front points bolded
+plotParcel <- function(index, type = "Original"){
+  if (type == "Original"){
+    eqscplot(parcel[[index]][,1:2], type='l')
+    points(parcelFront(index), pch = 16)
+  }
+  else if (type == "Mod"){
+    eqscplot(modParcel[[index]][,1:2], type='l')
+    points(parcelFront(index, "Mod"), pch = 16)
+  }
+  else{
+    print("Type is wrong. Enter either Original or Mod")
+    return (NULL)
+  }
+}
+
+# Keep track of parcels that need to be manually fixed
+misfits <- vector("logical", numPar)
 
 # Check if front edge is properly extracted
 for (i in 1:numPar){
   print(i)
-  if (is.null(parcelFront[[i]])) {next}
-  if (dim(parcelFront[[i]])[1] == 1) {next}
-  else {
-    eqscplot(parcel_data[[i]], type="l")
-    points(parcelFront[[i]], pch = 16)
-  }   # Change it to plot the parcel and add the front points as dark circles
-  Sys.sleep(0.05)  # Pause and continues automatically
+  if (is.null(parcelFront(i))) {misfits[i] <- TRUE}
+  numFront[i] <- sum(parcel[[i]][,3])
+  if (numFront[i] < 2) {misfits[i] <- TRUE}
+  # else {
+  #   plotParcel(i)
+  # }   # Change it to plot the parcel and add the front points as dark circles
+  # Sys.sleep(0.05)  # Pause and continues automatically
   # invisible(readline(prompt="Press [enter] to continue"))  # Manually press enter to continue
 }
 
 # Identify corner lots
 cornerStats <- vector(mode = "list", numPar)
 for (i in 1:numPar){
-  if(is.null(parcelFront[[i]])) {next}              # Skip landlocked
-  else if (dim(parcelFront[[i]])[1] < 3) {next}     # Skip parcels with 1 or 2 front points (most likly not a corner)
-  arr <- parcelFront[[i]]                           # Get the front points
+  print(i)
+  if(is.null(parcelFront(i))) {next}              # Skip landlocked
+  else if (dim(parcelFront(i))[1] < 3) {next}     # Skip parcels with 1 or 2 front points (most likly not a corner)
+  arr <- parcelFront(i)                           # Get the front points
   
   # Find slopes
   slope <- vector(mode = "double", length = dim(arr)[1]-1)
@@ -273,6 +318,7 @@ for (i in 1:numPar){
   # Difference in slope between first segment and last segment
   cornerStats[[i]]$segdiff <- atan2(sin(slope[length(slope)]-slope[1]), cos(slope[length(slope)]-slope[1]))
 }
+
 
 ## Look at the break down of slope differences across parcels to figure out what is a good threshold
 segDiff <- array(dim = c(numPar,2))
@@ -318,31 +364,31 @@ tibble(val = totDiff[,1]) %>%
   # scale_x_continuous(limits = c(0, 90))
 
 
-isCorner <- vector("logical", numPar)
-for (i in 1:numPar){
-  if (is.null(cornerStats[[i]])) {next}
-  # if mostly straight, skip   *********************** try taking out this test
-  # if (abs(cornerStats[[i]]$totdiff1) < (20/180*pi) || abs(cornerStats[[i]]$totdiff2) < (20/180*pi)) {next}
-  # if first and last segment have more than 60 degrees diff, mark as corner
-  # if (abs(cornerStats[[i]]$segdiff) >= (40/180*pi)) {isCorner[i] <- TRUE}
-  else {isCorner[i] <-  TRUE}
-}
+# isCorner <- vector("logical", numPar)
+# for (i in 1:numPar){
+#   if (is.null(cornerStats[[i]])) {next}
+#   # if mostly straight, skip   *********************** try taking out this test
+#   # if (abs(cornerStats[[i]]$totdiff1) < (20/180*pi) || abs(cornerStats[[i]]$totdiff2) < (20/180*pi)) {next}
+#   # if first and last segment have more than 60 degrees diff, mark as corner
+#   # if (abs(cornerStats[[i]]$segdiff) >= (40/180*pi)) {isCorner[i] <- TRUE}
+#   else {isCorner[i] <-  TRUE}
+# }
 
 # Extract front edge for corner lot
 # Read in roadway network. Find two closest roadway points to parcel centroid
 # Of the two ends of the front, choose the point shortest normal dist to roadway
 # Select edges that are within a certain angle of the segment on this end
-modParcelFront <- parcelFront
+modParcel <- parcel
 roadway <- vector("list", numPar)
 closestRoad <- vector("list", numPar)
 slopeDiffs <- vector("double", numPar)
 orderRead <- vector("character", numPar)
 for (i in 1:numPar){
-  if (isCorner[i]){  # Only modify if it is marked as a corner parcel
+  if (!is.null(cornerStats[[i]])){  # Only modify if it is marked as a corner parcel
     print(i)
-    par_cent <- colMeans(drop(parcel_data[[i]]))      # Get the parcel centroid
+    par_cent <- colMeans(drop(parcel[[i]]))      # Get the parcel centroid
     # Extract associated road
-    roads <- parcel_data$list_roads[[i]]$geometry.coordinates     # Get the list
+    roads <- parcels$list_roads[[i]]$geometry.coordinates     # Get the list
     # Find two closest points on roadway network to parcel centroid
     minDist1 <- 1e99
     minDist2 <- 1e99
@@ -377,8 +423,8 @@ for (i in 1:numPar){
     # print(road_slo)
     
     # Compare first and last front point. ID which one has shortest perp dist to roadway.
-    first <- parcelFront[[i]][1,]
-    last <- parcelFront[[i]][dim(parcelFront[[i]])[1],]
+    first <- parcelFront(i)[1,]
+    last <- parcelFront(i)[dim(parcelFront(i))[1],]
     distFirst <- perpDist(first[1], first[2], closestRoad[[i]][1,1], closestRoad[[i]][1,2], closestRoad[[i]][2,1], closestRoad[[i]][2,2])
     distLast <- perpDist(last[1], last[2], closestRoad[[i]][1,1], closestRoad[[i]][1,2], closestRoad[[i]][2,1], closestRoad[[i]][2,2])
     slopes <- cornerStats[[i]]$slopes
@@ -395,7 +441,8 @@ for (i in 1:numPar){
         for (j in 1:length(slopes)){
           if (atan2(sin(slopes[j]-slopeCut), cos(slopes[j]-slopeCut)) < 0) {  # This edge goes past the threshold
             print(j)
-            modParcelFront[[i]] <- parcelFront[[i]][1:j,]
+            modParcel[[i]][,3] <- 0
+            modParcel[[i]][1:j,3] <- 1
             break
           }
           # If no edge goes past the threshold, don't need to change anything
@@ -408,7 +455,8 @@ for (i in 1:numPar){
         for (j in 1:length(slopes)){
           if (atan2(sin(slopes[j]-slopeCut), cos(slopes[j]-slopeCut)) > 0) {   # This edge goes past the threshold
             print(j)
-            modParcelFront[[i]] <- parcelFront[[i]][1:j,]
+            modParcel[[i]][,3] <- 0
+            modParcel[[i]][1:j,3] <- 1
             break
           }
           # If no edge goes past the threshold, don't need to change anything
@@ -427,7 +475,8 @@ for (i in 1:numPar){
         for (j in length(slopes):1){
           if (atan2(sin(slopes[j]-slopeCut), cos(slopes[j]-slopeCut)) < 0){
             print(j)
-            modParcelFront[[i]] <- parcelFront[[i]][(j+1):(length(slopes)+1),]
+            modParcel[[i]][,3] <- 0
+            modParcel[[i]][(j+1):(length(slopes)+1),3] <- 1
             break
           }
           # If no edge goes past the threshold, don't need to change anything
@@ -440,7 +489,8 @@ for (i in 1:numPar){
         for (j in length(slopes):1){
           if (atan2(sin(slopes[j]-slopeCut), cos(slopes[j]-slopeCut)) > 0){
             print(j)
-            modParcelFront[[i]] <- parcelFront[[i]][(j+1):(length(slopes)+1),]
+            modParcel[[i]][,3] <- 0
+            modParcel[[i]][(j+1):(length(slopes)+1),3] <- 1
             break
           }
           # If no edge goes past the threshold, don't need to change anything
@@ -450,22 +500,75 @@ for (i in 1:numPar){
   }
 }
 
+
+# Flag corner lots where front points cover X% of total parcel area
+
+flagCorner <- function(index){
+  # Make sure this is marked as a potential corner lot
+  if(is.null(cornerStats[[index]])){
+    print("This is not marked as a potential corner lot")
+    return(NULL)}
+  par <- modParcel[[index]][,1:2]
+  front <- modParcel[[index]][(modParcel[[index]][,3] == 1),1:2]
+  sf_par <- st_as_sf(SpatialPolygons(list(Polygons(list(Polygon(par)),1))))
+  sf_front <- st_as_sf(SpatialPolygons(list(Polygons(list(Polygon(front)),1))))
+  prop <- st_area(sf_front)/st_area(sf_par)
+  return(prop)
+}
+
+propFront <- vector("double", numPar)
+
+for(i in 1:numPar){
+  if (!is.null(flagCorner(i))){
+    propFront[i] <- flagCorner(i)
+  }  
+}
+
+# Check out the distribution of proportions. Figure out a cutoff value for corner parcels 
+# that may not have front points extracted properly. Higher values = more concerning
+tibble(val = propFront) %>% 
+  filter(val != 0) %>%    # Most values are 0%. Filter those out to look at relevant values
+  ggplot(., aes(x = val)) +
+  geom_histogram(aes(y = ..count../sum(..count..)), binwidth = 0.02) +
+  scale_x_continuous(breaks = seq(0, 0.5, 0.02)
+    # , limits = c(90, 0)
+  )  
+
+tibble(val = propFront) %>% 
+  filter(val != 0) %>%    # Most values are 0%. Filter those out to look at relevant values
+  ggplot(., aes(x = val)) +
+  geom_histogram(aes(y = cumsum(..count..)/sum(..count..)), binwidth = 0.02) +
+  scale_x_reverse(breaks = seq(0, 0.5, 0.02)
+                     # , limits = c(90, 0)
+  )  
+
+sum(propFront > 0.1)
+
+# Update misfits. Any parcels with proportion > 10% will be flagged for manual review
+for (i in 1:numPar){
+  if(propFront[i] > 0.1){misfits[i] <- TRUE}
+}
+
+################################################################
+# RData saved up to here########################################
+################################################################
+
 # Take a look at the roads 
 troubleshootRoad <- function(index){
   eqscplot(roadway[[index]], type='l')
   points(closestRoad[[index]], pch = 19)
   points(roadway[[index]], pch = 1)
-  lines(parcel_data[[index]])
+  lines(parcel[[index]])
 }
 
 # Check if the modified parcel fronts are good without edits
 for (i in 1:numPar){
   if (isCorner[i]){
     print(i)
-    eqscplot(parcel_data[[i]],type='l', tol=0.9)
-    points(parcelFront[[i]], pch = 1)
-    text(parcelFront[[i]], labels = row(parcelFront[[i]]), pos = 4, offset = 1)
-    points(modParcelFront[[i]], pch = 16)
+    eqscplot(parcel[[i]],type='l', tol=0.9)
+    points(parcelFront(i), pch = 1)
+    text(parcelFront(i), labels = row(parcelFront(i)), pos = 4, offset = 1)
+    points(modParcel[[i]], pch = 16)
     points(closestRoad[[i]])
     lines(roadway[[i]])
     # Sys.sleep(0.1)  # Pause and continues automatically
@@ -487,11 +590,11 @@ for (i in 1:numPar){
     
     
     # Get the modified parcel indices for front from the function
-    modIndexFront[[i]] <- vector("logical", dim(parcel_data[[i]])[1]-1)
-    for (j in 1:(dim(parcel_data[[i]])[1]-1)){
+    modIndexFront[[i]] <- vector("logical", dim(parcel[[i]])[1]-1)
+    for (j in 1:(dim(parcel[[i]])[1]-1)){
       print(j)
-      for (k in 1:dim(modParcelFront[[i]])[1]){
-        if (abs(parcel_data[[i]][j,1]-modParcelFront[[i]][k,1]) < 0.001 && abs(parcel_data[[i]][j,2]-modParcelFront[[i]][k,2]) < 0.0001){
+      for (k in 1:dim(modParcel[[i]])[1]){
+        if (abs(parcel[[i]][j,1]-modParcel[[i]][k,1]) < 0.001 && abs(parcel[[i]][j,2]-modParcel[[i]][k,2]) < 0.0001){
           modIndexFront[[i]][j] <- TRUE
           break
         }
@@ -511,9 +614,9 @@ for (i in 1:numPar){
 
 checkCorner <- function(i){
   # Convert matrices to tibbles
-  tblPar <- as_tibble(parcel_data[[i]])
-  tblFront <- as_tibble(parcelFront[[i]])
-  tblModFront <- as_tibble(modParcelFront[[i]])
+  tblPar <- as_tibble(parcel[[i]])
+  tblFront <- as_tibble(parcelFront(i))
+  tblModFront <- as_tibble(modParcel[[i]])
   tblClosestRoad <- as_tibble(closestRoad[[i]])
   tblRoadway <- as_tibble(roadway[[i]])
   
@@ -548,27 +651,28 @@ checkCorner <- function(i){
 # Back edge is furthest away (true distance) from front centroid
 # If edges somehow tie, select edge that has smallest slope difference
 # If 2 edges somehow tie, select randomly between edges. Or if more than two edges, furthest perpendicular distance?
-# Inputs: parcel_data, indexFront
+# Inputs: parcel, indexFront
 # Outputs: string vector that returns "front/side/rear" for each corresponding edge. 
-# Edge 1 = point1 to point2, edge 2 = point2 to point3, etc. Length of vector is length(parcel_data) - 1.
-idEdges <- function(par, indF){
-  edges <- indF
+# Edge 1 = point1 to point2, edge 2 = point2 to point3, etc. Length of vector is length(parcel) - 1.
+idEdges <- function(index){
+  par <- modParcel[[index]]
+  edges <- par[-dim(par)[1],3]
   # print(edges)
   # sides[(sides[])] <- "Front"
   # Find average of front
-  if (sum(indF) == 0){
+  if (sum(edges) == 0){
     return (NULL)
   }
-  else if (sum(indF) == 1){
-    centF <- par[indF[],]
+  else if (sum(edges) == 1){
+    centF <- parcelFront(index, "Mod")
   } else{
-    centF <- colMeans(par[indF[],])
+    centF <- colMeans(parcelFront(index, "Mod"))
   }
-  # Find furthest edge (using midpoint)
   maxDist <- 0
   maxInd <- NULL
   for (i in 1:(dim(par)[1]-1)){
-    if (!indF[i]){       # Test only if not a front edge
+    # Find furthest edge (using midpoint)
+    if (par[i,3] == 0){       # Test only if not a front edge
       edge <- (par[i,] + par[i + 1, ]) / 2
       dist <- (edge[1]-centF[1])*(edge[1]-centF[1]) + (edge[2]-centF[2])*(edge[2]-centF[2])
       # Case 1: further distance, assign new furthest edge
@@ -580,30 +684,73 @@ idEdges <- function(par, indF){
       else if (dist == maxDist){
         print(paste("Tied! Index = ", i))
         maxInd <- c(maxInd, i)
-        
       }
       # Case 3: distance is shorter. Keep moving.
     }
+    
+    
+    ############### Identify front edge. Only front edge if the next point is also a front point
+    if (edges[i] == 1 && edges[i+1] == 1){
+      edges[i] <- "Front"
+    }
   }
   # print(maxInd)
-  edges[(edges[])] <- "Front"
   edges[maxInd] <- "Rear"
   # Anything not yet marked is a side edge
-  edges[(edges[] == "FALSE")] <- "Side"
+  edges[(edges == 1)] <- "Side"
+  edges[(edges == 0)] <- "Side"
   return(edges)
 }
 
 # Run idEdges on all parcels
 parcelEdges <- vector("list", numPar)
 for (i in 1:numPar){
+  if (misfits[i]){next}
   # print(i)
-  par <- unique(parcel_data[[i]])
-  par <- rbind(par, par[1,])
-  parcelEdges[[i]] <- idEdges(par, indexFront[[i]])
+  parcelEdges[[i]] <- idEdges(i)
 }
 
+
+# Read in building footprints
+file_bldg <- "epabldgs.geojson"
+bldgs <- read_sf(file_bldg)
+# Index buildings by APN ascending. NULL for APNs with no buildings
+bldg <- data.frame(dim = c(numPar,2))
+for (i in 1:numPar){
+  apn <- parcels$properties.APN[[i]]
+  bldg[i,] <- bldgs[match(apn, bldgs$APN), c("APN", "geometry")]
+  # if (!is.null(bldg[[i]])){      # If not, there is a building
+  #   if (length(bldg[[i]] == 1)){  # If there is one building, convert from MULTIPOLYGON to POLYGON
+  #     bldg[[i]] <- st_cast(bldg[[i]], "POLYGON")
+  #   }
+  #   else{
+  #     
+  #   }
+  # }
+}
+test <- st_read(file_bldg)
+
+getBldg <- function(index){
+  apn <- parcels$properties.APN[[index]]
+  return(bldgs[match(apn, bldgs$APN), c("APN", "geometry")])
+}
+
+geometry = st_sfc(lapply(1:nrows, function(x) st_geometrycollection()))
+df <- st_sf(id = 1:nrows, geometry = geometry)
+
+g = st_sfc(st_point(1:2), st_point(3:4))
+s = st_sf(a=3:4, g)
+
+geometry <- lapply(1:numPar, getBldg)
+bldg <- st_sf(APN = parcels$properties.APN, geometry = geometry)
+g = st_sfc(st_point(1:2), st_point(3:4))
+s = st_sf(a=3:4, g)
+
+
+
+
 # Cut out front yard
-# Input: parcel_data, building_data, parcelFront
+# Input: parcel, building_data, parcelFront
 # Use first and last front edge points to draw a line
 # Find point or edge on building that is closest (perpendicular distance)
 # Find line equation for front edge of building, XXXX then find intersection points on parcel
@@ -627,8 +774,7 @@ removeFront <- function(par, bldg, front){
   slope <- atan2((p_f-p_i)[2],(p_f-p_i)[1])
   pt <- bldg[minIndex,]
   r_slope <- c(cos(slope),sin(slope))
-  return (c(pt, r_slope))
-  
+  return (c(pt, r_slope, minDist))
 }
 
 # Helper function: normal distance between a point and a line segment
@@ -730,7 +876,7 @@ crossprod2D <- function(u, v){
 
 
 # Side and rear buffers
-# Input: parcel_data, edgeID (front, side, rear), building footprint, front points
+# Input: parcel, edgeID (front, side, rear), building footprint, front points
 # Param: side buffer dist, rear buffer dist
 # Draw parallel lines that are [buffer dist] away from each side
 # Select parallel lines that are closer to parcel centroid, so lines are going inward, not outward
@@ -777,6 +923,7 @@ allBuffers <- function(par, edges, bldg, front, side_dist, rear_dist, bldg_dist 
   # If there are intersections, this will split into multiple polygons. If not, nothing changes
   split <- st_cast(st_make_valid(sf_newPar), "POLYGON")
   split <- st_difference(split, sf_bldg)
+  split <- st_cast(split, "POLYGON")
   # print(split)
   if (length(split[[1]]) == 0){
     return ("No suitable polygons")
@@ -811,7 +958,7 @@ allBuffers <- function(par, edges, bldg, front, side_dist, rear_dist, bldg_dist 
     # If after checking all the sides, not marked as inverted, add this polygon
     if (!inverted){
       # polys <- rbind(polys, poly)
-      return(st_coordinates(poly)[,1:2])
+      return(poly)
     }
   }
   # 
@@ -826,7 +973,7 @@ allBuffers <- function(par, edges, bldg, front, side_dist, rear_dist, bldg_dist 
 
 
 # Helper Function: buffer for one edge
-# Input: parcel_data
+# Input: parcel
 # Param: edge_index, buffer distance
 # Draw two points [buffer dist] perpendicular from edge midpoint, choose the point that is inside polygon
 # Draws parallel line that [buffer dist] away from the edge
@@ -1104,8 +1251,8 @@ write_csv(as.data.frame(landlockedAPNs), "landlockedAPNs.csv")
 #   all_merged_rings[[a]] <- NA
 #   print(a)
 #   # Check the type of data: double (aka array) or list
-#   arr <- drop(parcel_data[[a]]) # gets rid of dimensions of 1 length
-#   if (typeof(parcel_data[[a]]) == "double") { # is an array [a x b x c]
+#   arr <- drop(parcel[[a]]) # gets rid of dimensions of 1 length
+#   if (typeof(parcel[[a]]) == "double") { # is an array [a x b x c]
 #     if(length(dim(arr)) == 3 && dim(arr)[1] == 2 && dim(arr)[3] == 2) { # if array is [2 x b x 2]
 #       ring1 <- arr[1,,]
 #       ring2 <- arr[2,,]
@@ -1124,12 +1271,12 @@ write_csv(as.data.frame(landlockedAPNs), "landlockedAPNs.csv")
 #       jsonIndex <- jsonIndex + 1
 #     }                                  
 #   } 
-#   else if (typeof(parcel_data[[a]]) == "list") {
-#     if (length(parcel_data[[a]]) > 5){
+#   else if (typeof(parcel[[a]]) == "list") {
+#     if (length(parcel[[a]]) > 5){
 #       manualJSON[jsonIndex, 1] <- a
 #       manualJSON[jsonIndex, 2] <- "long list"
 #       jsonIndex <- jsonIndex + 1
-#     } else{all_merged_rings[[a]] <- unpackList(parcel_data[[a]])}
+#     } else{all_merged_rings[[a]] <- unpackList(parcel[[a]])}
 #   }
 #   else{
 #     manualJSON[jsonIndex, 1] <- a
@@ -1207,7 +1354,71 @@ error_poly <- array(0, dim=c(1000,2))
 index_poly <- 1
 listMaxRect <- vector("list", numPar)
 ctx = initjs()
-for(a in 1:5051) {
+
+test <- cbind(c(0,8,8,6,6,8,8,0,0),c(0,0,2,2,4,4,6,6,0))
+
+test <- cbind(c(0,100,100,25,25,0,0),c(0,0,100,100,75,75,0))
+
+test <- prepPoly(parcel[[2401]][,1:2])[[1]]
+eqscplot(test, type='l')
+test2 <- cbind(c(10,40,40,10,10),c(80,80,60,60,80))
+lines(test2)
+test3 <- rbind(test[1,],test2,test)
+eqscplot(test3, type='l')
+
+
+ctx = initjs()
+# tryCatch({
+lr <- NULL
+lr = find_lr(ctx, test)
+eqscplot(test, type= "l")
+pp = plotrect(lr[[1]])
+lines(pp)
+
+# View(lr)
+# View(lr[[3]])
+rects <- NULL
+for (i in 1:dim(lr[[3]])[1]){
+  rects <- rbind(rects, st_sf(index = i, geom = st_sfc(st_polygon(list(plotrect(lr[[3]][i,]))))))
+}
+
+
+aggr <- st_union(rects)
+eqscplot(test, type='l')
+lines(st_coordinates(aggr))
+for(i in 1:dim(rects)[1]){
+  lines(st_coordinates(rects$geom[[i]])[,1:2])
+}
+lines(st_coordinates(rects$geom[[1]])[,1:2])
+lines(st_coordinates(rects$geom[[2]])[,1:2])
+lines(st_coordinates(rects$geom[[3]])[,1:2])
+lines(st_coordinates(rects$geom[[4]])[,1:2])
+lines(st_coordinates(rects$geom[[5]])[,1:2])
+for(i in 1:length(rects)){
+  lines(st_coordinates(rects$geom[[i]])[,1:2])
+}
+lines(aggr[[1]][[1]])
+plot(aggr)
+
+for (i in 2:length(rects)){
+  aggr <- st_uni
+}
+?st_sfc()
+
+aggre
+
+rects <- lr[[3]]
+
+
+print("success")
+},
+error = function(e){
+  print("Error")
+  error_poly[index_poly,] <<- c(a,b)
+  index_poly <<- index_poly + 1
+})
+
+for(a in 1:1) {
   ## process list types
   if(typeof(all_merged_rings[[a]]) == "list"){
     len = length(all_merged_rings[[a]])
