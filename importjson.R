@@ -1,4 +1,4 @@
-# devtools::install_git('https://gitlab.com/b-rowlingson/maxrectangle')
+devtools::install_git('https://gitlab.com/b-rowlingson/maxrectangle')
 
 library(maxrectangle)
 library(jsonlite)
@@ -12,7 +12,7 @@ library(sf)
 library(lwgeom)
 
 # To save current environment
-save.image(".RData")
+# save.image(".RData")
 
 ### parcels 
 file_parcel <- "epaparcels_clean_NAD83.geojson"
@@ -326,7 +326,8 @@ cornerStats <- vector(mode = "list", numPar)
 for (i in 1:numPar){
   print(i)
   if(is.null(parcelFront(i))) {next}              # Skip landlocked
-  else if (dim(parcelFront(i))[1] < 3) {next}     # Skip parcels with 1 or 2 front points (most likly not a corner)
+  # else if (dim(parcelFront(i))[1] < 3) {next}     # Skip parcels with 1 or 2 front points (most likly not a corner)
+  else if (length(parcelFront(i)) < 6) {next}
   arr <- parcelFront(i)                           # Get the front points
   
   # Find slopes
@@ -393,15 +394,15 @@ tibble(val = totDiff[,1]) %>%
   # scale_x_continuous(limits = c(0, 90))
 
 
-# isCorner <- vector("logical", numPar)
-# for (i in 1:numPar){
-#   if (is.null(cornerStats[[i]])) {next}
-#   # if mostly straight, skip   *********************** try taking out this test
-#   # if (abs(cornerStats[[i]]$totdiff1) < (20/180*pi) || abs(cornerStats[[i]]$totdiff2) < (20/180*pi)) {next}
-#   # if first and last segment have more than 60 degrees diff, mark as corner
-#   # if (abs(cornerStats[[i]]$segdiff) >= (40/180*pi)) {isCorner[i] <- TRUE}
-#   else {isCorner[i] <-  TRUE}
-# }
+isCorner <- vector("logical", numPar)
+for (i in 1:numPar){
+  if (is.null(cornerStats[[i]])) {next}
+  # if mostly straight, skip   *********************** try taking out this test
+  # if (abs(cornerStats[[i]]$totdiff1) < (20/180*pi) || abs(cornerStats[[i]]$totdiff2) < (20/180*pi)) {next}
+  # if first and last segment have more than 60 degrees diff, mark as corner
+  # if (abs(cornerStats[[i]]$segdiff) >= (40/180*pi)) {isCorner[i] <- TRUE}
+  else {isCorner[i] <-  TRUE}
+}
 
 # Helper function: normal distance between a point and a line segment
 # (x,y) is the point, (x1,y2) and (x2,y2) make the line segment
@@ -677,70 +678,71 @@ sum(misfits)
 # RData saved up to here########################################
 ################################################################
 
-# Take a look at the roads 
-troubleshootRoad <- function(index){
-  eqscplot(roadway[[index]], type='l')
-  points(closestRoad[[index]], pch = 19)
-  points(roadway[[index]], pch = 1)
-  lines(parcel[[index]])
-}
-
-# Check if the modified parcel fronts are good without edits
-for (i in 1:numPar){
-  if (isCorner[i]){
-    print(i)
-    eqscplot(parcel[[i]],type='l', tol=0.9)
-    points(parcelFront(i), pch = 1)
-    text(parcelFront(i), labels = row(parcelFront(i)), pos = 4, offset = 1)
-    points(modParcel[[i]], pch = 16)
-    points(closestRoad[[i]])
-    lines(roadway[[i]])
-    # Sys.sleep(0.1)  # Pause and continues automatically
-    invisible(readline(prompt="Press [enter] to continue"))  # Manually press enter to continue
-  }
-}
-
-# Manual check whether the modified parcel fronts are good, and adjust them manually
-modIndexFront <- vector("list", numPar)
-for (i in 1:numPar){
-  if (isCorner[i]){
-    
-    # Plot parcel and points
-    checkCorner(i)
-    
-    # User will manually check points
-    correction <- readline(prompt="Are the green ones ID'd correctly? Enter index/indices of points that need to be switched (space in between each number):")
-    correction <- unlist(strsplit(correction, split=" "))
-    
-    
-    # Get the modified parcel indices for front from the function
-    modIndexFront[[i]] <- vector("logical", dim(parcel[[i]])[1]-1)
-    for (j in 1:(dim(parcel[[i]])[1]-1)){
-      print(j)
-      for (k in 1:dim(modParcel[[i]])[1]){
-        if (abs(parcel[[i]][j,1]-modParcel[[i]][k,1]) < 0.001 && abs(parcel[[i]][j,2]-modParcel[[i]][k,2]) < 0.0001){
-          modIndexFront[[i]][j] <- TRUE
-          break
-        }
-      }
-    }
-    
-    if(length(correction) > 0){
-      for (j in 1:length(correction)){
-        index <- correction[j]
-        modIndexFront[[i]][j] <- !modIndexFront[[i]][j]
-      }
-    }
-    
-    # invisible(readline(prompt="Press [enter] to continue"))  # Manually press enter to continue
-  }
-}
+# # Take a look at the roads 
+# troubleshootRoad <- function(index){
+#   eqscplot(roadway[[index]], type='l')
+#   points(closestRoad[[index]], pch = 19)
+#   points(roadway[[index]], pch = 1)
+#   lines(parcel[[index]])
+# }
+# 
+# # Check if the modified parcel fronts are good without edits
+# for (i in 1:numPar){
+#   if (isCorner[i]){
+#     print(i)
+#     eqscplot(parcel[[i]],type='l', tol=0.9)
+#     points(parcelFront(i), pch = 1)
+#     text(parcelFront(i), labels = row(parcelFront(i)), pos = 4, offset = 1)
+#     points(modParcel[[i]], pch = 16)
+#     points(closestRoad[[i]])
+#     lines(roadway[[i]])
+#     # Sys.sleep(0.1)  # Pause and continues automatically
+#     invisible(readline(prompt="Press [enter] to continue"))  # Manually press enter to continue
+#   }
+# }
+# 
+# # Manual check whether the modified parcel fronts are good, and adjust them manually
+# modIndexFront <- vector("list", numPar)
+# for (i in 1:numPar){
+#   if (isCorner[i]){
+#     
+#     # Plot parcel and points
+#     checkCorner(i)
+#     
+#     # User will manually check points
+#     correction <- readline(prompt="Are the green ones ID'd correctly? Enter index/indices of points that need to be switched (space in between each number):")
+#     correction <- unlist(strsplit(correction, split=" "))
+#     
+#     
+#     # Get the modified parcel indices for front from the function
+#     modIndexFront[[i]] <- vector("logical", dim(parcel[[i]])[1]-1)
+#     for (j in 1:(dim(parcel[[i]])[1]-1)){
+#       print(j)
+#       for (k in 1:dim(modParcel[[i]])[1]){
+#         if (abs(parcel[[i]][j,1]-modParcel[[i]][k,1]) < 0.001 && abs(parcel[[i]][j,2]-modParcel[[i]][k,2]) < 0.0001){
+#           modIndexFront[[i]][j] <- TRUE
+#           break
+#         }
+#       }
+#     }
+#     
+#     if(length(correction) > 0){
+#       for (j in 1:length(correction)){
+#         index <- correction[j]
+#         modIndexFront[[i]][j] <- !modIndexFront[[i]][j]
+#       }
+#     }
+#     
+#     # invisible(readline(prompt="Press [enter] to continue"))  # Manually press enter to continue
+#   }
+# }
 
 
 
 # Read in building footprints
 file_bldg <- "epabldgsSFH_byAPN_PF_NAD83.geojson"
-bldgs <- read_sf(file_bldg) %>% select(APN, bldg = geometry)
+bldgs <- read_sf(file_bldg) %>% select(APN, geometry)
+colnames(bldgs)[which(names(bldgs) == "geometry")] <- "bldg"
 bldgs <- bldgs %>% st_set_crs(102643)%>% arrange(APN)
 
 # Function to grab largest building on each parcel
@@ -750,7 +752,7 @@ largestBldg <- function(bldg){
     st_cast("POLYGON") %>% 
     mutate(order = (order(st_area(.), decreasing = TRUE))) %>% 
     filter(order == 1) %>% 
-    select(bldg)
+    select(geometry)
 }
 
 # 4 mins to complete
