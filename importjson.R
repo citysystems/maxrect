@@ -1,4 +1,4 @@
-devtools::install_git('https://gitlab.com/b-rowlingson/maxrectangle')
+# devtools::install_git('https://gitlab.com/b-rowlingson/maxrectangle')
 
 library(maxrectangle)
 library(jsonlite)
@@ -916,9 +916,9 @@ removeFront <- function(par, bldg, front){
   # print(minIndex)
   # print(minDist)
   # Find parallel line
-  slope <- atan2((p_f-p_i)[2],(p_f-p_i)[1])
+  # slope <- atan2((p_f-p_i)[2],(p_f-p_i)[1])
   pt <- bldg[minIndex,]
-  r_slope <- c(cos(slope),sin(slope))
+  r_slope <- p_f-p_i
   return (c(pt, r_slope, minDist))
 }
 
@@ -941,6 +941,37 @@ tibble(val = frontDist) %>%
   geom_histogram(aes(), binwidth = 18)
 # Roughly 16% of parcels (600) have a front dist < 18 ft
 
+
+# Helper Function: buffer for one edge
+# Input: parcel
+# Param: edge_index, buffer distance
+# Draw two points [buffer dist] perpendicular from edge midpoint, choose the point that is inside polygon
+# Draws parallel line that [buffer dist] away from the edge
+# Returns a line for the edge (u + param * slope vector r) as a vector length 4 (ux, uy, rx, ry)
+buffer <- function(par, ind, dist){
+  edge <- par[ind:(ind+1),]      # index and next point
+  # print(edge)
+  edge_mp <- colMeans(edge)      # Edge midpoint
+  # print(edge_mp)
+  edge_slope <- atan2(par[ind+1,2]-par[ind,2], par[ind+1,1]-par[ind,1])
+  # print(edge_slope)
+  offset <- dist * c(cos(edge_slope + pi/2), sin(edge_slope + pi/2))
+  # print(offset)
+  opt1 <- edge_mp + offset
+  # print(opt1)
+  opt2 <- edge_mp - offset
+  # print(opt2)
+  if (point.in.polygon(opt1[1],opt1[2],par[,1],par[,2]) == 1){ # If opt1 is inside polygon
+    vec <- c(cos(edge_slope), sin(edge_slope))
+    return (c(opt1, vec))    
+  } else if (point.in.polygon(opt2[1],opt2[2],par[,1],par[,2]) == 1){ # If opt2 is inside polygon
+    vec <- c(cos(edge_slope), sin(edge_slope))
+    return (c(opt2, vec))
+  } else{
+    print(paste("Buffer does not work for this polygon, index = ", ind))
+  }
+}
+
 # Side and rear buffers
 # Input: parcel, edgeID (front, side, rear), building footprint, front points
 # Param: side buffer dist, rear buffer dist
@@ -959,7 +990,7 @@ allBuffers <- function(par, edges, bldg, front, side_dist, rear_dist, bldg_dist 
         next
       }
       else{
-        buffers <- rbind(buffers, removeFront(par, bldg, front)[1:2])
+        buffers <- rbind(buffers, removeFront(par, bldg, front)[1:4])
         skipFront <- TRUE
       }
     }
@@ -1046,36 +1077,6 @@ allBuffers <- function(par, edges, bldg, front, side_dist, rear_dist, bldg_dist 
   # }
 }
 
-# Helper Function: buffer for one edge
-# Input: parcel
-# Param: edge_index, buffer distance
-# Draw two points [buffer dist] perpendicular from edge midpoint, choose the point that is inside polygon
-# Draws parallel line that [buffer dist] away from the edge
-# Returns a line for the edge (u + param * slope vector r) as a vector length 4 (ux, uy, rx, ry)
-buffer <- function(par, ind, dist){
-  edge <- par[ind:(ind+1),]      # index and next point
-  # print(edge)
-  edge_mp <- colMeans(edge)      # Edge midpoint
-  # print(edge_mp)
-  edge_slope <- atan2(par[ind+1,2]-par[ind,2], par[ind+1,1]-par[ind,1])
-  # print(edge_slope)
-  offset <- dist * c(cos(edge_slope + pi/2), sin(edge_slope + pi/2))
-  # print(offset)
-  opt1 <- edge_mp + offset
-  # print(opt1)
-  opt2 <- edge_mp - offset
-  # print(opt2)
-  if (point.in.polygon(opt1[1],opt1[2],par[,1],par[,2]) == 1){ # If opt1 is inside polygon
-    vec <- c(cos(edge_slope), sin(edge_slope))
-    return (c(opt1, vec))    
-  } else if (point.in.polygon(opt2[1],opt2[2],par[,1],par[,2]) == 1){ # If opt2 is inside polygon
-    vec <- c(cos(edge_slope), sin(edge_slope))
-    return (c(opt2, vec))
-  } else{
-    print(paste("Buffer does not work for this polygon, index = ", ind))
-  }
-}
-
 
 # Find the available area after buffers. No building set back. Side = 5 ft, Rear = 10 ft
 result_Bldg0 <- NULL
@@ -1096,7 +1097,7 @@ for (i in 1:numPar){
     front <- parcelFront(i, "Mod")
     side_dist <- 5
     rear_dist <- 10
-    geom <- allBuffers(par, edges, bldg, front, side_dist, rear_dist, bldg_dist = 0)
+    geom <- allBuffers(par, edges, bldg, front, side_dist, rear_dist, bldg_dist = 0.01)
     if (is.character(geom) || nrow(geom) == 0){
       sf <- st_sf(APN = parcels$properties.APN[[i]], valid = FALSE, geometry = st_sfc(st_polygon()))
     }
@@ -1108,7 +1109,44 @@ for (i in 1:numPar){
   }
 }
 
-  
+
+
+# Apply minimum 8 x 20 area to get rid of unviable spaces
+# Merge the possible rectangles together
+bldg0_buildable <- NULL
+for (i in 1:nrow(result_Bldg0)){
+  if (!misfits[i] && st_area(result_Bldg0[i,]) > 160){
+    print(i)
+    library(maxrectangle)
+    ctx = initjs()
+    lr <- NULL
+    prep <- prepPoly(st_coordinates(result_Bldg0[1,])[,1:2])
+    poly <- prep[[1]]
+    minX <- prep[[2]]
+    minY <- prep[[3]]
+    lr = find_lr(ctx, poly)
+    # Case 1: there is a region to merge together
+    if (is.array(lr[[3]])){
+      rects <- vector("list", dim(lr[[3]])[1])
+      for (i in 1:dim(lr[[3]])[1]){
+        rects[[i]] <- st_polygon(list(lr[[3]][i,,]))
+      }
+      merged_rects <- st_sfc(rects) %>% st_cast("POLYGON") %>% st_union()
+      merged_rects <- merged_rects + c(minX,minY)
+      sf <- st_sf(APN = result_Bldg0[[1]][1], geometry = st_sfc(merged_rects))
+    }
+    # Case 2: Nothing to show
+    else{
+      sf <- st_sf(APN = result_Bldg0[[1]][1], geometry = st_sfc(st_polygon()))
+    }
+    
+    # eqscplot(st_coordinates(result_Bldg0[1,])[,1:2], type='l')
+    # eqscplot(st_coordinates(result_Bldg0[2,]), type='l')
+    # lines(st_coordinates(merged_rects))
+    bldg0_buildable <- rbind(bldg0_buildable, sf)
+  }
+}
+
   
 
 # # Find which parcels are landlocked. These will need front edges manually identified
@@ -1431,7 +1469,6 @@ find_lr <- function(ct, xy, options){
 }
 
 prepPoly <- function(poly){
-  poly <- apply(poly, c(1,2), round) # round the coordinates
   minX <- min(poly[,1])              # get the smallest x coord
   minY <- min(poly[,2])              # get the smallest y coord
   poly[,1] <- poly[,1]- minX         # adjust for relative coordinates
@@ -1472,25 +1509,6 @@ lines(test2)
 test3 <- rbind(test[1,],test2,test)
 eqscplot(test3, type='l')
 
-library(maxrectangle)
-ctx = initjs()
-# tryCatch({
-lr <- NULL
-lr = find_lr(ctx, test3)
-eqscplot(test3, type= "l")
-pp = plotrect(lr[[1]])
-lines(pp)
-
-system.time({
-  rects <- vector("list", dim(lr[[3]])[1])
-  for (i in 1:dim(lr[[3]])[1]){
-    rects[[i]] <- st_polygon(list(lr[[3]][i,,]))
-  }
-  merged_rects <- st_sfc(rects) %>% st_cast("POLYGON") %>% st_union()
-  
-})
-
-lines(st_coordinates(merged_rects))
 
 
 # View(lr)
@@ -1644,68 +1662,68 @@ eqscplot(all_merged_rings[[4]][[2]], type= "l")
 ##########################
 # Accessory functions for troubleshooting
 
-flip_order <- function(array, start, end){
-  copy <- array(0, dim=c(end - start + 1, 2))
-  for(n in 1:(end-start+1)){
-    copy[n,] <- array[start+n-1,]
-  }
-  copy <- copy[nrow(copy):1,]
-  for(n in 1:(end-start+1)){
-    array[start + n - 1,1] <-  copy[n,1]
-    array[start + n - 1,2] <-  copy[n,2]
-  }
-  return(array)
-}
-
-flip_all <- function(merged_ring){
-  start_index <- 1
-  end_index <- length(merged_ring[,1])
-  merged_ring <- flip_order(merged_ring, start_index, end_index)
-}
-flip_ring1 <- function(merged_ring){         # flips ring1
-  start_value <- merged_ring[1,] #coordinates of first point
-  second_index <- 0              #initialize
-  # find index for point that closes ring1, matches first point
-  for (n in 2:length(merged_ring[,1])) {
-    if (start_value[1] == merged_ring[n,1] && start_value[2] == merged_ring[n,2]) { 
-      second_index <- n
-      break
-    }
-  }
-  merged_ring <- flip_order(merged_ring, 1, second_index)
-  return(merged_ring)
-}
-
-flip_ring2 <- function(merged_ring){          # flips ring2
-  start_value <- merged_ring[1,] #coordinates of first point
-  second_index <- 0              #initialize
-  third_index <- 0
-  # find index for point that closes ring1, matches first point
-  for (n in 2:length(merged_ring[,1])) {
-    if (start_value[1] == merged_ring[n,1] && start_value[2] == merged_ring[n,2]) { 
-      second_index <- n
-      print(paste("second = ", n))
-      break
-    }
-  }
-  for (n in (second_index+1):length(merged_ring[,1])) {
-    if (start_value[1] == merged_ring[n,1] && start_value[2] == merged_ring[n,2]) {
-      third_index <- n
-      print(paste("third = ", n))
-      break
-    }
-  }
-  merged_ring <- flip_order(merged_ring, second_index, third_index)
-  return(merged_ring)
-}
-
-plot_call <- function(index1,index2){
-  eqscplot(all_merged_rings[[index1]][[index2]], type= "l")
-}
-
-plot_merged <- function(index){
-  eqscplot(all_merged_rings[[error_poly[index,1]]][[error_poly[index,2]]], type= "l")
-}
+# flip_order <- function(array, start, end){
+#   copy <- array(0, dim=c(end - start + 1, 2))
+#   for(n in 1:(end-start+1)){
+#     copy[n,] <- array[start+n-1,]
+#   }
+#   copy <- copy[nrow(copy):1,]
+#   for(n in 1:(end-start+1)){
+#     array[start + n - 1,1] <-  copy[n,1]
+#     array[start + n - 1,2] <-  copy[n,2]
+#   }
+#   return(array)
+# }
+# 
+# flip_all <- function(merged_ring){
+#   start_index <- 1
+#   end_index <- length(merged_ring[,1])
+#   merged_ring <- flip_order(merged_ring, start_index, end_index)
+# }
+# flip_ring1 <- function(merged_ring){         # flips ring1
+#   start_value <- merged_ring[1,] #coordinates of first point
+#   second_index <- 0              #initialize
+#   # find index for point that closes ring1, matches first point
+#   for (n in 2:length(merged_ring[,1])) {
+#     if (start_value[1] == merged_ring[n,1] && start_value[2] == merged_ring[n,2]) { 
+#       second_index <- n
+#       break
+#     }
+#   }
+#   merged_ring <- flip_order(merged_ring, 1, second_index)
+#   return(merged_ring)
+# }
+# 
+# flip_ring2 <- function(merged_ring){          # flips ring2
+#   start_value <- merged_ring[1,] #coordinates of first point
+#   second_index <- 0              #initialize
+#   third_index <- 0
+#   # find index for point that closes ring1, matches first point
+#   for (n in 2:length(merged_ring[,1])) {
+#     if (start_value[1] == merged_ring[n,1] && start_value[2] == merged_ring[n,2]) { 
+#       second_index <- n
+#       print(paste("second = ", n))
+#       break
+#     }
+#   }
+#   for (n in (second_index+1):length(merged_ring[,1])) {
+#     if (start_value[1] == merged_ring[n,1] && start_value[2] == merged_ring[n,2]) {
+#       third_index <- n
+#       print(paste("third = ", n))
+#       break
+#     }
+#   }
+#   merged_ring <- flip_order(merged_ring, second_index, third_index)
+#   return(merged_ring)
+# }
+# 
+# plot_call <- function(index1,index2){
+#   eqscplot(all_merged_rings[[index1]][[index2]], type= "l")
+# }
+# 
+# plot_merged <- function(index){
+#   eqscplot(all_merged_rings[[error_poly[index,1]]][[error_poly[index,2]]], type= "l")
+# }
 
 ########
 #Export shapefiles

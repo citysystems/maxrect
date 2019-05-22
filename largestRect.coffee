@@ -66,8 +66,8 @@ window.largestRect = (poly, options) ->
   if not options? then options = {}
   # maximum allowed aspect ratio for the rectangle solution
   options.maxAspectRatio = 5 # options.maxAspectRatio || 5
-  options.minWidth = 50 #options.minWidth || 50
-  options.minHeight = 50 #options.minHeight || 50
+  options.minWidth = 8 #options.minWidth || 50     # 8 x 20 is minimum size for ADU
+  options.minHeight = 20 #options.minHeight || 50
   options.tolerance = 0.02 #options.tolerance || 0.02
 
   options.nTries = options.nTries || 20 # Default value for the number of possible center points of the maximal rectangle
