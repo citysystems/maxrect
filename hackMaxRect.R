@@ -1,0 +1,180 @@
+
+
+
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+# Helper functions
+#------------------------------------------------------------------------------
+
+# Returns the squared euclidean distance between points a and b
+squaredDist <- function(a, b){
+  deltax = b[1] - a[1]
+  deltay = b[2] - a[1]
+  return (deltax * deltax + deltay * deltay)
+}
+
+# Checks whether the horizontal ray going through point p intersects the segment p1p2
+# Implementation from: http://rosettacode.org/wiki/Ray-casting_algorithm#CoffeeScript
+rayIntersectsSegment <- function(p, p1, p2){
+  if (p1[2] < p2[2]){
+    a <- p1
+    b <- p2
+  }
+  else{
+    a <- p2
+    b <- p1
+  }
+  if (p[2] == b[2] || p[2] == a[2]){
+    p[1] <- p[1] + .Machine$double.eps
+  }
+  if (p[2] > b[2] || p[2] < a[2]) {return(FALSE)}
+  else if (p[1] > a[1] && p[1] > b[1]) {return(FALSE)}
+  else if (p[1] < a[1] && p[1] < b[1]) {return(TRUE)}
+  else{
+    mAB <- (b[2] - a[2]) / (b[1] - a[1])
+    mAP <- (p[2] - a[2]) / (p[1] - a[1])
+    return (mAP > mAB)
+  }
+}
+
+
+# Checks whether the point p is inside a polygon using the Ray-Casting algorithm
+# Implementation from: http://rosettacode.org/wiki/Ray-casting_algorithm#CoffeeScript
+pointInPoly <- function(p, poly){
+  n <- nrow(poly)
+  b <- poly[n,]
+  c <- 0
+  for (i in 1:n){
+    a <- b
+    b <- poly[i,]
+    if (rayIntersectsSegment(p, a, b)){
+      c <- c + 1
+    }
+  }
+  return (c %% 2 != 0)
+}
+
+
+# Checks whether the point p is inside the bounding box of the line segment p1q1
+pointInSegmentBox <- function(p, p1, q1){
+  # allow for some margins due to numerical errors
+  eps <- 1e-9
+  px <- p[1]
+  py <- p[2]
+  if (px < (min(p1[1], q1[1]) - eps) || 
+      px > (max(p1[1], q1[1]) + eps) || 
+      py < (min(p1[1], q1[1]) - eps) || 
+      px > (max(p1[1], q1[1]) + eps)){return(FALSE)}
+  return(TRUE)
+}
+
+# Finds the intersection point (if there is one) of the lines p1q1 and p2q2
+lineIntersection <- function(p1, q1, p2, q2){
+  # allow for some margins due to numerical errors
+  eps <- 1e-9
+  # find the intersection point between the two infinite lines
+  dx1 <- p1[1] - q1[1]
+  dy1 <- p1[2] - q1[2]
+  dx2 <- p2[1] - q2[1]
+  dy2 <- p2[2] - q2[2]
+  denom <- dx1 * dy2 - dy1 * dx2
+  if (abs(denom) < eps) {return(NULL)}
+  cross1 <- p1[1]*q1[2] - p1[2]*q1[1]
+  cross2 <- p2[1]*q2[2] - p2[2]*q2[1]
+  
+  px <- (cross1*dx2 - cross2*dx1) / denom
+  py <- (cross1*dy2 - cross2*dy1) / denom
+  return (c(px, py))
+}
+
+
+# Checks whether the line segments p1q1 and p2q2 intersect
+segmentsIntersect <- function(p1, q1, p2, q2){
+  p <- lineIntersection(p1, q1, p2, q2)
+  if (is.na(p) || is.null(p)){return (FALSE)}
+  return (list(pointInSegmentBox(p, p1, q1), pointInSegmentBox(p, p2, q2)))
+}
+
+# Check if polygon polyA is inside polygon polyB
+polyInsidePoly <- function(polyA, polyB){
+  nA <- nrow(polyA)
+  nB <- nrow(polyB)
+  bA <- polyA[nA,]
+  
+  for (iA in 1:nA){
+    aA <- bA
+    bA <- polyA[iA,]
+    
+    bB <- polyB[nB,]
+    for (iB in 1:nB){
+      aB <- bB
+      bB <- polyB[iB,]
+      if (segmentsIntersect(aA, bA, aB, bB)){
+        return (FALSE)
+      }
+    }
+  }
+  return (pointInPoly(polyA[1,], polyB))
+}
+
+
+# Rotates the point p for alpha radians around the origin
+rotatePoint <- function(p, alpha, origin){
+  if (is.null(origin) || is.na(origin)){
+    origin <- c(0,0)
+  }
+  xshifted <- p[1] - origin[1]
+  yshifted <- p[2] - origin[2]
+  return (c(cos(alpha) * xshifted - sin(alpha) * yshifted + origin[1],sin(alpha) * xshifted + cos(alpha) * yshifted + origin[2]))
+}
+
+
+# Rotates the polygon for alpha radians around the origin
+rotatePoly <- function(poly, alpha, origin){
+  for (i in 1:nrow(poly)){
+    poly[i,] <- rotatePoint(poly[i,], alpha, origin)
+  }
+  return(poly)
+}
+
+# Gives the 2 closest intersection points between a ray with alpha radians
+# from the origin and the polygon. The two points should lie on opposite sides of the origin
+intersectPoints <- function(poly, origin, alpha) {
+  eps <- 1e-9
+  origin <-
+    c(origin[1] + eps * cos(alpha), origin[2] + eps * sin(alpha))
+  x0 <- origin[1]
+  y0 <- origin[2]
+  shiftedOrigin <- c(x0 + cos(alpha), y0 + sin(alpha))
+  
+  idx <- 1
+  if (abs(shiftedOrigin[1] - x0) < eps) {
+    idx <- 2
+  }
+  n <- nrow(poly)
+  b <- poly[n,]
+  minSqDistLeft <- 1e99
+  minSqDistRight <- 1e99
+  closestPointLeft <- NULL
+  closestPointRight <- NULL
+  for (i in 1:n) {
+    a <- b
+    b <- poly[i,]
+    p <- lineIntersection(origin, shiftedOrigin, a, b)
+    if (!is.null(p) && !is.na(p) && pointInSegmentBox(p, a, b)) {
+      sqDist <- squaredDist(origin, p)
+      if (p[idx] < origin[idx]) {
+        if (sqDist < minSqDistLeft) {
+          minSqDistLeft <- sqDist
+          closestPointLeft <- p
+        }
+      }
+      else if (p[idx] > origin[idx]) {
+        if (sqDist < minSqDistRight) {
+          minSqDistRight <- sqDist
+          closestPointRight <- p
+        }
+      }
+    }
+  }
+  return (closestPointRight)
+}
