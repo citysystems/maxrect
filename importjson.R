@@ -1118,6 +1118,13 @@ for (i in 1:numPar){
   }
 }
 
+for (i in 1:numPar){
+  if (!misfits[i]){
+    eqscplot(st_coordinates(result_Bldg0[i,]), type='l')
+    invisible(readline(prompt="Press [enter] to continue"))
+  }
+}
+
 ############################################
 save.image("E.RData")
 ############################################
@@ -1137,6 +1144,11 @@ prepPoly <- function(poly){
 bldg0_buildable <- NULL
 for (i in 1:10){#nrow(result_Bldg0)){
   if (!misfits[i] && st_area(result_Bldg0[i,]) > 160){
+    # Case 1: there is a hole
+    
+    
+    # Case 2: there is no hole
+    
     print(i)
     ctx = initjs()
     lr <- NULL
