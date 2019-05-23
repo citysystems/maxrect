@@ -11,6 +11,8 @@ library(ggrepel)
 library(sf)
 library(lwgeom)
 
+### Note: In order for the find_lr function to work as we intend (pulling all possible buildable area), we need to change the largestRect.coffee in the R library "3.5/maxrectangle/js" folder
+
 # To save current environment
 # save.image(".RData")
 
@@ -1140,9 +1142,9 @@ for (i in 1:nrow(result_Bldg0)){
       sf <- st_sf(APN = result_Bldg0[[1]][1], geometry = st_sfc(st_polygon()))
     }
     
-    # eqscplot(st_coordinates(result_Bldg0[1,])[,1:2], type='l')
+    eqscplot(st_coordinates(result_Bldg0[1,])[,1:2], type='l')
     # eqscplot(st_coordinates(result_Bldg0[2,]), type='l')
-    # lines(st_coordinates(merged_rects))
+    points(st_coordinates(bldg0_buildable[1,]))
     bldg0_buildable <- rbind(bldg0_buildable, sf)
   }
 }
