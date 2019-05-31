@@ -6,6 +6,7 @@ library(readr)
 library(MASS)
 library(sp)
 library(dplyr)
+library(plyr)
 library(ggplot2)
 library(ggrepel)
 library(sf)
@@ -1159,14 +1160,15 @@ for (i in 1:10){#nrow(result_Bldg0)){
     minX <- prep[[2]]
     minY <- prep[[3]]
     lr = find_lr(ctx, poly)
+    lr <- test
     # Case 1: there is a region to merge together
-    if (is.array(lr[[3]])){
-      rects <- vector("list", dim(lr[[3]])[1])
-      for (i in 1:dim(lr[[3]])[1]){
-        rects[[i]] <- st_polygon(list(lr[[3]][i,,]))
+    if (length(lr[[3]]) > 1){
+      rects <- vector("list", length(lr[[3]]))
+      for (i in 1:length(lr[[3]])){
+        rects[[i]] <- st_polygon(list(lr[[3]][[i]]))
       }
       merged_rects <- st_sfc(rects) %>% st_cast("POLYGON") %>% st_union()
-      merged_rects <- merged_rects + c(minX,minY)
+      # merged_rects <- merged_rects + c(minX,minY)
       sf <- st_sf(APN = result_Bldg0[[1]][i], geometry = st_sfc(merged_rects))
       bldg0_buildable <- rbind(bldg0_buildable, sf)
     }
@@ -1188,7 +1190,7 @@ for (i in 1:10){#nrow(result_Bldg0)){
 }
 i <- 7
 eqscplot(st_coordinates(result_Bldg0[i,])[,1:2], type='l')
-points(st_coordinates(bldg0_buildable[i,]))
+plot(st_coordinates(bldg0_buildable[1,]))
 
 
 # # Find which parcels are landlocked. These will need front edges manually identified
