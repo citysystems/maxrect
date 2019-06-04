@@ -1,20 +1,32 @@
 # Input: st_polygon. May contain holes, need to separate those out
-largestRect <- function(polygon){
+largestRect <- function(polygon, angles = NULL){
   ## For keeping all the buildable area
   rectOptions <- vector("list", 10000)
   
   ##### User's input normalization #####
-  aspectRatioStep <- 1
+  aspectRatioStep <- 0.1
   angleStep <- 5
   maxAspectRatio <- 15
   minWidth <- 8
   minHeight <- 20
   # tolerance <- 0.02
   
-  nTries <- 20
+  nTries <- 100
   
   # Angles
-  angles <- seq(-90, 90+angleStep, angleStep)
+  if (is.null(angles)){
+    angles <- seq(-90, 90+angleStep, angleStep)*pi/180
+  }
+  else{ # Add all possible "square" orientations for each angle (e.g. 45, 135, -45, -135)
+    angles <- unlist(angles)
+    angles <- unique(c(angles,
+      angles + pi/2,
+      angles + pi,
+      angles - pi/2
+    ))
+    angles <- angles %% (2*pi) %>% sort() %>% unique()
+  }
+  
   ## print(angles)
   
   
@@ -49,7 +61,7 @@ largestRect <- function(polygon){
   origins <- array(dim = c(0,2))
   # get the centroid of the polygon
   centroid <- st_coordinates(st_centroid(polygon)) %>% as.vector()
-  if (pointInPoly(centroid, poly1)){
+  if (pointInPoly(centroid, poly1) && !pointInPoly(centroid, poly2)){
     origins <- rbind(origins, centroid)
   }
   # get few more points inside the polygon
@@ -57,7 +69,7 @@ largestRect <- function(polygon){
     rndX <- runif(1) * boxWidth + minx
     rndY <- runif(1) * boxHeight + miny
     rndPoint <- c(rndX, rndY)
-    if (pointInPoly(rndPoint, poly1)){
+    if (pointInPoly(rndPoint, poly1) && !pointInPoly(rndPoint, poly2)){
       origins <- rbind(origins, rndPoint)
     }
   }
@@ -71,20 +83,15 @@ largestRect <- function(polygon){
   # Mother of for loops
   for (i in 1:length(angles)){
     ## print(paste0("i =", i))
-    angle <- angles[i]
-    angleRad <- -angle*pi/180
+    angleRad <- angles[i]
     
     for (j in 1:nrow(origins)){
       ## print(paste0("j =", j))
       origOrigin <- origins[j,]
       origW <- intersectPoints(poly1, origOrigin, angleRad)
       ## print(paste0("origW =", origW))
-      p1W <- origW[1,]
-      p2W <- origW[2,]
       origH <- intersectPoints(poly1, origOrigin, angleRad + pi/2)
       ## print(paste0("origH =", origH))
-      p1H <- origH[1,]
-      p2H <- origH[2,]
       modifOrigins <- rbind(colMeans(origW), colMeans(origH)) # Two modified origins, using center of horizontal and verticle ray segments
       ## print(paste0("modifOrigins =", modifOrigins))
       iterMaxArea <- 0
@@ -105,8 +112,12 @@ largestRect <- function(polygon){
         ## print(paste0("maxHeight =", maxHeight))
         
         minAspectRatio <- max(1, minWidth/maxHeight)
-        maxAspectRatio <- min(maxAspectRatio, maxWidth/minHeight)
-        aRatios <- seq(minAspectRatio, maxAspectRatio + aspectRatioStep, aspectRatioStep)
+        maxAspectRatio <- max(min(maxAspectRatio, maxWidth/minHeight),1)
+        if (minAspectRatio > maxAspectRatio){
+          aRatios <- minAspectRatio
+        }else{
+          aRatios <- seq(abs(minAspectRatio), abs(maxAspectRatio + aspectRatioStep), abs(aspectRatioStep))
+        }
         ## print(paste0("aRatios =", aRatios))
         
         for (l in 1:length(aRatios)){
@@ -228,7 +239,7 @@ pointInPoly <- function(p, poly){
 # Checks whether the point p is inside the bounding box of the line segment p1q1
 pointInSegmentBox <- function(p, p1, q1){
   # allow for some margins due to numerical errors
-  eps <- 1e-5
+  eps <- 1e-1
   px <- p[1]
   py <- p[2]
   if (px < (min(p1[1], q1[1]) - eps) || 
@@ -241,7 +252,7 @@ pointInSegmentBox <- function(p, p1, q1){
 # Finds the intersection point (if there is one) of the lines p1q1 and p2q2
 lineIntersection <- function(p1, q1, p2, q2){
   # allow for some margins due to numerical errors
-  eps <- 1e-5
+  eps <- 1e-1
   # find the intersection point between the two infinite lines
   dx1 <- p1[1] - q1[1]
   dy1 <- p1[2] - q1[2]
@@ -316,7 +327,7 @@ rotatePoly <- function(poly, alpha, origin){
 # Gives the 2 closest intersection points between a ray with alpha radians
 # from the origin and the polygon. The two points should lie on opposite sides of the origin
 intersectPoints <- function(poly, origin, alpha) {
-  eps <- 1e-5
+  eps <- 1e-1
   origin <- c(origin[1] + eps * cos(alpha), origin[2] + eps * sin(alpha))
   x0 <- origin[1]
   y0 <- origin[2]

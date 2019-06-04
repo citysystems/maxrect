@@ -1,4 +1,5 @@
-devtools::install_git('https://gitlab.com/b-rowlingson/maxrectangle')
+### Only run this once to install maxrectangle
+# devtools::install_git('https://gitlab.com/b-rowlingson/maxrectangle')
 
 library(maxrectangle)
 library(jsonlite)
@@ -1140,40 +1141,87 @@ prepPoly <- function(poly){
   return(list(poly,minX,minY))
 }
 
+##### misfits are already filtered out
+# misfits <- cbind(misfits, APN = parcels$properties.APN)
+# 
+# # misfits identified on result_Bldg0
+# for (i in 1:nrow(result_Bldg0)){
+#   result_Bldg0$misfit[i] <- misfits[which(result_Bldg0$APN[i] == misfits, TRUE)[1],1]
+# }
 
+result_Bldg0$slopes[[1]] <- list()
+result_Bldg0$valid <- TRUE
+result_Bldg0$xmin <- 0
+result_Bldg0$ymin <- 0
+
+# Get the angle/slopes present in each bldg parcel
+for (i in 1:nrow(result_Bldg0)){
+  # Skip this one if the area is smaller than 160 SF (minimum area for ADU) or if there is no geometry
+  if (st_area(result_Bldg0[i,]) < 160 || st_is_empty(result_Bldg0[i,])){
+    result_Bldg0$valid[i] <- FALSE
+    next
+  }
+  print(i)
+  # Extract coordinates
+  coord <- as_tibble(st_coordinates(result_Bldg0[i,]))
+  # Separate out if there are holes
+  poly1 <- (coord %>% filter(L1 == 1) %>% select(X, Y)) %>% unlist() %>% unname() %>% matrix(ncol = 2)
+  poly2 <- NULL
+  if (mean(coord$L1) > 1){
+    poly2 <- (coord %>% filter(L1 == 2) %>% select(X, Y)) %>% unlist() %>% unname() %>% matrix(ncol = 2)
+  }
+  # Get the slopes for each edge
+  slopes <- vector(length = nrow(poly1)-1)
+  for (j in 1:(nrow(poly1)-1)){
+    slopes[j] <- atan2((poly1[j+1,2]-poly1[j,2]),(poly1[j+1,1]-poly1[j,1]))
+  }
+  if (!is.null(poly2)){
+    slopes2 <- vector(length = nrow(poly1)-1)
+    for (j in 1:(nrow(poly2)-1)){
+      slopes2[j] <- atan2((poly2[j+1,2]-poly2[j,2]),(poly2[j+1,1]-poly2[j,1]))
+    }
+    # Put slopes in one list
+    slopes <- c(slopes, slopes2)
+  }
+  
+  # Remove duplicates
+  slopes <- slopes %>% sort() %>% unique() %>% list()
+  
+  
+  # Add to result_Bldg0
+  result_Bldg0$slopes[[i]] <- slopes
+  
+  # Store Xmin and Ymin and adjust geometry to relative coordinates
+  result_Bldg0$xmin[i] <- st_bbox(result_Bldg0[i,])[1]
+  result_Bldg0$ymin[i] <- st_bbox(result_Bldg0[i,])[2]
+  st_geometry(result_Bldg0[i,]) <- st_geometry(result_Bldg0[i,]) - c(result_Bldg0$xmin[i], result_Bldg0$ymin[i])
+  
+}
+
+############################################
+save.image("F.RData")
+############################################
 
 # Apply minimum 8 x 20 area to get rid of unviable spaces
 # Merge the possible rectangles together
 bldg0_buildable <- NULL
 for (i in 1:10){#nrow(result_Bldg0)){
-  if (!misfits[i] && st_area(result_Bldg0[i,]) > 160){
-    # Case 1: there is a hole
-
-
-    # Case 2: there is no hole
-
+  if (result_Bldg0$valid){
     print(i)
-    ctx = initjs()
     lr <- NULL
-    prep <- prepPoly(st_coordinates(result_Bldg0[i,])[,1:2])
-    poly <- prep[[1]]
-    minX <- prep[[2]]
-    minY <- prep[[3]]
-    lr = find_lr(ctx, poly)
-    lr <- test
+    lr <- largestRect(st_geometry(result_Bldg0[i,]),result_Bldg0$slopes[i])
+    
     # Case 1: there is a region to merge together
     if (length(lr[[3]]) > 1){
       rects <- vector("list", length(lr[[3]]))
-      for (i in 1:length(lr[[3]])){
-        rects[[i]] <- st_polygon(list(lr[[3]][[i]]))
+      for (j in 1:length(lr[[3]])){
+        rects[[j]] <- st_polygon(list(lr[[3]][[j]]))
       }
       merged_rects <- st_sfc(rects) %>% st_cast("POLYGON") %>% st_union()
       # merged_rects <- merged_rects + c(minX,minY)
       sf <- st_sf(APN = result_Bldg0[[1]][i], geometry = st_sfc(merged_rects))
       bldg0_buildable <- rbind(bldg0_buildable, sf)
-    }
-    # Case 2: Nothing to show
-    else{
+    } else { # Case 2: Nothing to show
       sf <- st_sf(APN = result_Bldg0[[1]][i], geometry = st_sfc(st_polygon()))
       bldg0_buildable <- rbind(bldg0_buildable, sf)
     }
@@ -1190,8 +1238,12 @@ for (i in 1:10){#nrow(result_Bldg0)){
 }
 i <- 7
 eqscplot(st_coordinates(result_Bldg0[i,])[,1:2], type='l')
-plot(st_coordinates(bldg0_buildable[1,]))
+for(x in 1:length(lr[[3]])){
+  lines(lr[[3]][[x]])
+}
 
+lines(st_coordinates(bldg0_buildable[1,]))
+plot(st_coordinates(bldg0_buildable[1,]))
 
 # # Find which parcels are landlocked. These will need front edges manually identified
 # landlocked <- vector("logical", numPar - sum(checkFront))
