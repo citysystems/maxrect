@@ -49,6 +49,7 @@ findBuildable <- function(poly1, poly2 = NULL){
       
       # Step 4: find all intersections between parSeg and other edges (polygon and hole)
       intersections <- vector("numeric",0) # initialize vector to store intersecting X coordinates
+      intersections <- c(intersections, midpt[1] - 10, midpt[1] + 10, edge[1], edge[1] - 20, edge[1] + 20, edge[3], edge[3] - 20, edge[3] + 20)
       # intersections <- rbind(intersections, edge[1:2], edge[3:4])
       for (j in 1:nrow(poly1mod)){
         jplus1 <- j %% nrow(poly1mod) + 1
