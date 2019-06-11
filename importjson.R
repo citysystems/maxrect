@@ -1205,45 +1205,67 @@ save.image("F.RData")
 # Apply minimum 8 x 20 area to get rid of unviable spaces
 # Merge the possible rectangles together
 bldg0_buildable <- NULL
-for (i in 1:10){#nrow(result_Bldg0)){
-  if (result_Bldg0$valid){
-    print(i)
-    lr <- NULL
-    lr <- largestRect(st_geometry(result_Bldg0[i,]),result_Bldg0$slopes[i])
-    
-    # Case 1: there is a region to merge together
-    if (length(lr[[3]]) > 1){
-      rects <- vector("list", length(lr[[3]]))
-      for (j in 1:length(lr[[3]])){
-        rects[[j]] <- st_polygon(list(lr[[3]][[j]]))
-      }
-      merged_rects <- st_sfc(rects) %>% st_cast("POLYGON") %>% st_union()
-      # merged_rects <- merged_rects + c(minX,minY)
-      sf <- st_sf(APN = result_Bldg0[[1]][i], geometry = st_sfc(merged_rects))
-      bldg0_buildable <- rbind(bldg0_buildable, sf)
-    } else { # Case 2: Nothing to show
-      sf <- st_sf(APN = result_Bldg0[[1]][i], geometry = st_sfc(st_polygon()))
-      bldg0_buildable <- rbind(bldg0_buildable, sf)
-    }
-
-    eqscplot(st_coordinates(result_Bldg0[1,])[,1:2], type='l')
-    # eqscplot(st_coordinates(result_Bldg0[2,]), type='l')
-    # lines(st_coordinates(merged_rects))
-
+for (i in 1:nrow(result_Bldg0)){
+  print(i)
+  geom <- largestRect(result_Bldg0[i,])
+  # print(i)
+  if (is.character(geom)){
+    sf <- st_sf(APN = result_Bldg0$APN[i], message = geom, geometry = st_sfc(st_polygon()))
   }
   else{
-    sf <- st_sf(APN = result_Bldg0[[1]][i], geometry = st_sfc(st_polygon()))
-    bldg0_buildable <- rbind(bldg0_buildable, sf)
+    sf <- st_sf(APN = result_Bldg0$APN[i], message = "Success", geometry = geom)
   }
+  # print(i)
+  bldg0_buildable <- rbind(bldg0_buildable, sf)
 }
-i <- 7
-eqscplot(st_coordinates(result_Bldg0[i,])[,1:2], type='l')
-for(x in 1:length(lr[[3]])){
-  lines(lr[[3]][[x]])
-}
-
-lines(st_coordinates(bldg0_buildable[1,]))
-plot(st_coordinates(bldg0_buildable[1,]))
+##############################################
+save.image("G.RData")
+#############################################
+#########EXPLORE HERE#################################
+# To plot the buildable area identified in algorithm
+plot(bldg0_buildable[i,1])
+# To plot the area with setback removed
+eqscplot(st_coordinates(result_Bldg0[i,]),type='l')
+#########EXPLORE HERE#################################
+# 
+#   if (result_Bldg0$valid){
+#     print(i)
+#     lr <- NULL
+#     lr <- largestRect(st_geometry(result_Bldg0[i,]),result_Bldg0$slopes[i])
+#     
+#     # Case 1: there is a region to merge together
+#     if (length(lr[[3]]) > 1){
+#       rects <- vector("list", length(lr[[3]]))
+#       for (j in 1:length(lr[[3]])){
+#         rects[[j]] <- st_polygon(list(lr[[3]][[j]]))
+#       }
+#       merged_rects <- st_sfc(rects) %>% st_cast("POLYGON") %>% st_union()
+#       # merged_rects <- merged_rects + c(minX,minY)
+#       sf <- st_sf(APN = result_Bldg0[[1]][i], geometry = st_sfc(merged_rects))
+#       bldg0_buildable <- rbind(bldg0_buildable, sf)
+#     } else { # Case 2: Nothing to show
+#       sf <- st_sf(APN = result_Bldg0[[1]][i], geometry = st_sfc(st_polygon()))
+#       bldg0_buildable <- rbind(bldg0_buildable, sf)
+#     }
+# 
+#     eqscplot(st_coordinates(result_Bldg0[1,])[,1:2], type='l')
+#     # eqscplot(st_coordinates(result_Bldg0[2,]), type='l')
+#     # lines(st_coordinates(merged_rects))
+# 
+#   }
+#   else{
+#     sf <- st_sf(APN = result_Bldg0[[1]][i], geometry = st_sfc(st_polygon()))
+#     bldg0_buildable <- rbind(bldg0_buildable, sf)
+#   }
+# }
+# i <- 7
+# eqscplot(st_coordinates(result_Bldg0[i,])[,1:2], type='l')
+# for(x in 1:length(lr[[3]])){
+#   lines(lr[[3]][[x]])
+# }
+# 
+# lines(st_coordinates(bldg0_buildable[1,]))
+# plot(st_coordinates(bldg0_buildable[1,]))
 
 # # Find which parcels are landlocked. These will need front edges manually identified
 # landlocked <- vector("logical", numPar - sum(checkFront))
