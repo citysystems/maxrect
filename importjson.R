@@ -1223,9 +1223,26 @@ save.image("G.RData")
 #############################################
 #########EXPLORE HERE#################################
 # To plot the buildable area identified in algorithm
-plot(bldg0_buildable[i,1])
+plot(st_geometry(bldg0_buildable[i,1]), col = 'red')
 # To plot the area with setback removed
-eqscplot(st_coordinates(result_Bldg0[i,]),type='l')
+plot(st_geometry(result_Bldg0[i,]), border = 'blue', lwd = 5, add = TRUE)
+
+for (i in 1:nrow(bldg0_buildable)){
+  if (st_is_empty(bldg0_buildable[i,1])){next}
+  print(i)
+  # To plot the area with setback removed
+  plot(st_geometry(result_Bldg0[i,]), col = 'blue', axes = TRUE)
+  # To plot the buildable area identified in algorithm
+  plot(st_geometry(bldg0_buildable[i,1]), col = 'red', add = TRUE)
+  
+  
+  
+  # Sys.sleep(0.05)  # Pause and continues automatically
+  invisible(readline(prompt="Press [enter] to continue"))  # Manually press enter to continue
+}
+
+plot(st_geometry(result_Bldg0[91,]), col = 'blue', axes = TRUE)
+plot(st_geometry(test), col = 'red', add = TRUE)
 #########EXPLORE HERE#################################
 # 
 #   if (result_Bldg0$valid){

@@ -1,7 +1,6 @@
 
-## Based on D3's algorithm
 # Input: st_polygon. May contain holes, need to separate those out
-largestRect <- function(polygon, debug = FALSE){
+largestRect <- function(polygon, print = FALSE, debug = FALSE){
   poly <- st_geometry(polygon)
   if (st_area(poly) < 160){return ("Area less than 160")}
   if (st_is_empty(poly)){return ("Empty geometry")}
@@ -17,17 +16,28 @@ largestRect <- function(polygon, debug = FALSE){
   poly2 <- coord %>% filter(L1 == 2) %>% select(X, Y) %>% unlist() %>% unname() %>% matrix(ncol = 2)
   if (dim(poly2)[1] == 0) {poly2 <- NULL}
   # return(list(poly1,poly2))
+  
+  if (print){
+    color_transparent <- adjustcolor(2, alpha.f = 0.5)
+    
+    plot(st_geometry(polygon), col = 'green', axes = TRUE)
+    result <- findBuildable(poly1, poly2, debug)
+    plot(st_geometry(result), col = color_transparent, add = TRUE)
+    return(result)
+  }
+  
   return(findBuildable(poly1, poly2, debug))
 }
 
 
 ## New customized algorithm (V2)
 
-# tsrects <<- NULL
-# tsedge <<- NULL
-# tsparSeg <<- NULL
-# tsrects <<- NULL
-# tspoly1mod <<- NULL
+tsrects <<- NULL
+tsedge <<- NULL
+tsparSeg <<- NULL
+tspoly1mod <<- NULL
+tspoly2mod <<- NULL
+tsintersections <<- NULL
 
 findBuildable <- function(poly1, poly2 = NULL, debug = FALSE){
   # Make sure that polygons are not closed
@@ -41,6 +51,7 @@ findBuildable <- function(poly1, poly2 = NULL, debug = FALSE){
   }
   validRects <- vector(mode = "list", length = 0)
   for (i in 1:nrow(poly1)){
+    # print(i)
     if (debug) {print(i)}
     # Polygon is formatted as a 2 x N array of coordinates, no other information. If hole present, hole is in same format.
     # N rows does not includes final row to close polygon
@@ -52,7 +63,14 @@ findBuildable <- function(poly1, poly2 = NULL, debug = FALSE){
     if (h) {poly2mod <- rotatePoly(poly2, -angle, poly1[i,])}
     if (debug) { print(poly1mod)}
     # eqscplot(poly1mod, type='l')
-    edge <- c(poly1mod[i,],poly1mod[iplus1,]) # edge = c(x1, y1, x2, y2)
+    edge <- rbind(poly1mod[i,],poly1mod[iplus1,]) # edge = rbind(c(x1, y1), c(x2, y2))
+    vec <- edge[2,] - edge[1,]
+    edgeExt <- rbind(edge[1,] - 1000*vec, edge[2,] + 1000*vec)
+    
+    # if (i == 3){
+    #   eqscplot(poly1mod, type = 'l')
+    #   lines(edgeExt)
+    # }
     
     # Step 1: find midpoint of edge
     midpt <- (poly1mod[iplus1,] + poly1mod[i,]) / 2
@@ -61,40 +79,49 @@ findBuildable <- function(poly1, poly2 = NULL, debug = FALSE){
     side2 <- midpt - c(0, 1e-3)    ## ***Note: this algorithm won't work if there is only a tiny sliver where the midpoint of segment is. Hopefully this doesn't pose an issue, or we will need to refine the process further...
     offset <- c(0,0)
     # Case A: side1 is inside polygon and outside of hole
-    if (pointInPoly(side1, poly1mod) && (!h || (h && !pointInPoly(side1, poly2mod)))){
+    if (pointInPoly(side1, poly1mod, offset = 0) && (!h || (h && !pointInPoly(side1, poly2mod, offset = 0)))){
       offset <- c(0, 8)
       # Just to check that there isn't an error, see if side1 is also valid. If yes, there is some issue that needs to be resolved.
-      if (pointInPoly(side2, poly1mod) && (!h || (h && !pointInPoly(side2, poly2mod)))){
+      if (pointInPoly(side2, poly1mod, offset = 0) && (!h || (h && !pointInPoly(side2, poly2mod, offset = 0)))){
         print("Error: side 1 and 2 both valid")
       }
-    }else if(pointInPoly(side2, poly1mod) && (!h || (h && !pointInPoly(side2, poly2mod)))){ # Case B: side2 is inside polygon and outside of hole
+    }else if(pointInPoly(side2, poly1mod, offset = 0) && (!h || (h && !pointInPoly(side2, poly2mod, offset = 0)))){ # Case B: side2 is inside polygon and outside of hole
       offset <- c(0, -8)
     }else{
       print("Error: both side 1 and 2 invalid. Skip")
       next
     }
     # Step 3: construct parallel line segment ("parSeg") 8 ft away in appropriate direction (we will call the two || lines "the ribbon")
-    parSeg <- edge + c(offset, offset)
+    parSeg <- edgeExt + rbind(offset, offset)
+    
     # Step 4: find all intersections between parSeg and other edges (polygon and hole)
     intersections <- vector("numeric",0) # initialize vector to store intersecting X coordinates
-    intersections <- c(intersections, midpt[1] - 10, midpt[1] + 10, edge[1], edge[1] - 20, edge[1] + 20, edge[3], edge[3] - 20, edge[3] + 20)
-    # intersections <- rbind(intersections, edge[1:2], edge[3:4])
+    intersections <- c(intersections, midpt[1] - 10, midpt[1] + 10, edge[1,1], edge[1,1] - 20, edge[1,1] + 20, edge[2,1], edge[2,1] - 20, edge[2,1] + 20)
+    # intersections <- rbind(intersections, edge[1,], edge[2,])
     for (j in 1:nrow(poly1mod)){
       jplus1 <- j %% nrow(poly1mod) + 1
       nrow(poly1mod)
-      seg <- c(poly1mod[j,], poly1mod[jplus1,])
-      # If line segment intersects, add to collection
-      if (segmentsIntersect(seg[1:2], seg[3:4], parSeg[1:2], parSeg[3:4], endsCount = TRUE, eps = 1) == TRUE){
-        intersections <- c(intersections, lineIntersection(seg[1:2], seg[3:4], parSeg[1:2], parSeg[3:4])[1])
+      seg <- rbind(poly1mod[j,], poly1mod[jplus1,])
+      # If line segment intersects with parSeg, add to collection
+      if (segmentsIntersect(seg[1,], seg[2,], parSeg[1,], parSeg[2,], endsCount = TRUE, eps = 1) == TRUE){
+        intersections <- c(intersections, lineIntersection(seg[1,], seg[2,], parSeg[1,], parSeg[2,])[1])
+      }
+      # If line segment intersects with edgeExt, add to collection
+      if (segmentsIntersect(seg[1,], seg[2,], edgeExt[1,], edgeExt[2,], endsCount = TRUE, eps = 1) == TRUE){
+        intersections <- c(intersections, lineIntersection(seg[1,], seg[2,], edgeExt[1,], edgeExt[2,])[1])
       }
     }
     if (h){
       for (j in 1:nrow(poly2mod)){
         jplus1 <- j %% nrow(poly2mod) + 1
-        seg <- c(poly2mod[j,], poly2mod[jplus1,])
+        seg <- rbind(poly2mod[j,], poly2mod[jplus1,])
         # If line segment intersects, add to collection
-        if (segmentsIntersect(seg[1:2], seg[3:4], parSeg[1:2], parSeg[3:4], endsCount = TRUE, eps = 1) == TRUE){
-          intersections <- c(intersections, lineIntersection(seg[1:2], seg[3:4], parSeg[1:2], parSeg[3:4])[1])
+        if (segmentsIntersect(seg[1,], seg[2,], parSeg[1,], parSeg[2,], endsCount = TRUE, eps = 1) == TRUE){
+          intersections <- c(intersections, lineIntersection(seg[1,], seg[2,], parSeg[1,], parSeg[2,])[1])
+        }
+        # If line segment intersects with edgeExt, add to collection
+        if (segmentsIntersect(seg[1,], seg[2,], edgeExt[1,], edgeExt[2,], endsCount = TRUE, eps = 1) == TRUE){
+          intersections <- c(intersections, lineIntersection(seg[1,], seg[2,], edgeExt[1,], edgeExt[2,])[1])
         }
       }
     }
@@ -102,7 +129,7 @@ findBuildable <- function(poly1, poly2 = NULL, debug = FALSE){
     for (j in 1:nrow(poly1mod)){
       pt <- poly1mod[j,]
       # edge = c(x1, y1, x2, y2)
-      if (pt[1] >= edge[1] && pt[1] <= edge[3] && pt[2] >= edge[2] && pt[2] <= edge[4]){
+      if ((pt[2] >= edgeExt[1,2] && pt[2] <= parSeg[1,2]) || (pt[2] <= edgeExt[1,2] && pt[2] >= parSeg[1,2])){
         intersections <- c(intersections, pt[1])
       }
     }
@@ -110,7 +137,7 @@ findBuildable <- function(poly1, poly2 = NULL, debug = FALSE){
     if (h) {
       for (j in 1:nrow(poly2mod)){
         pt <- poly2mod[j,]
-        if (pt[1] >= edge[1] && pt[1] <= edge[3] && pt[2] >= edge[2] && pt[2] <= edge[4]){
+        if ((pt[2] >= edgeExt[1,2] && pt[2] <= parSeg[1,2]) || (pt[2] <= edgeExt[1,2] && pt[2] >= parSeg[1,2])){
           intersections <- c(intersections, pt[1])
         }
       }
@@ -151,14 +178,56 @@ findBuildable <- function(poly1, poly2 = NULL, debug = FALSE){
         rects[[length(rects)+1]] <- rect
       }
     }
+    # Add a rectangle at the midpoint in the other orientation
+    x1 <- midpt[1] - 4
+    x2 <- midpt[1] + 4
+    y1 <- midpt[2]
+    y2 <- midpt[2] + offset[2]/8*20
+    rect <- cbind(c(x1, x2, x2, x1), c(y1, y1, y2, y2))
+    rects[[length(rects)+1]] <- rect
+    # Add two rectangle at the corners in the other orientation
+    left <- edge[1,1]
+    right <- edge[2,1]
+    if (edge[1,1] > edge[2,1]){
+      left <- edge[2,1]
+      right <- edge[1,1]
+    }
+    x1 <- left
+    x2 <- left + 8
+    rect <- cbind(c(x1, x2, x2, x1), c(y1, y1, y2, y2))
+    rects[[length(rects)+1]] <- rect
+    x1 <- left + 8
+    x2 <- left + 16
+    rect <- cbind(c(x1, x2, x2, x1), c(y1, y1, y2, y2))
+    rects[[length(rects)+1]] <- rect
+    x1 <- right - 8
+    x2 <- right
+    rect <- cbind(c(x1, x2, x2, x1), c(y1, y1, y2, y2))
+    rects[[length(rects)+1]] <- rect
+    x1 <- right - 16
+    x2 <- right - 8
+    rect <- cbind(c(x1, x2, x2, x1), c(y1, y1, y2, y2))
+    rects[[length(rects)+1]] <- rect
     if (debug) {print(rects, digits = 10)}
+    
+    # if (i == 3){
+    #   tsrects <<- rects
+    #   tsedge <<- edgeExt
+    #   tsparSeg <<- parSeg
+    #   tspoly1mod <<- poly1mod
+    #   if (h){
+    #     tspoly2mod <<- poly2mod
+    #   }
+    #   tsintersections <<- intersections
+    #   return()
+    # }
     
     
     # Check which rectangles are inside poly and keep them
     if (length(rects) > 0){
       for (j in 1:length(rects)){
         rect <- rects[[j]]
-        if (!polyIntersect(rect, poly1mod) && polyInsidePoly(rect, poly1mod, partial = FALSE) && (!h || (h && !polyIntersect(rect, poly2mod) && !polyInsidePoly(rect, poly2mod) && !polyInsidePoly(poly2mod, rect)))){
+        if (!polyIntersect(rect, poly1mod) && polyInsidePoly(rect, poly1mod, offset = 1e-7, partial = FALSE) && (!h || (h && !polyIntersect(rect, poly2mod) && !polyInsidePoly(rect, poly2mod, offset = 1e-7) && !polyInsidePoly(poly2mod, rect, offset = 1e-7)))){
           # Rotate rectangle back to original orientation
           rect <- rotatePoly(rect, angle, poly1[i,])
           rect <- rbind(rect, rect[1,])
@@ -170,6 +239,7 @@ findBuildable <- function(poly1, poly2 = NULL, debug = FALSE){
   }
   if (h){
     for (i in 1:nrow(poly2)){
+      # print(i)
       if (debug) {print(i)}
       # Polygon is formatted as a 2 x N array of coordinates, no other information. If hole present, hole is in same format.
       # N rows does not includes final row to close polygon
@@ -179,7 +249,9 @@ findBuildable <- function(poly1, poly2 = NULL, debug = FALSE){
       angle <- atan2((poly2[iplus1,2]-poly2[i,2]),(poly2[iplus1,1]-poly2[i,1]))
       poly1mod <- rotatePoly(poly1, -angle, poly2[i,])
       poly2mod <- rotatePoly(poly2, -angle, poly2[i,])
-      edge <- c(poly2mod[i,],poly2mod[iplus1,]) # edge = c(x1, y1, x2, y2)
+      edge <- rbind(poly2mod[i,],poly2mod[iplus1,]) # edge = c(x1, y1, x2, y2)
+      vec <- edge[2,] - edge[1,]
+      edgeExt <- rbind(edge[1,] - 1000*vec, edge[2,] + 1000*vec)
       
       # Step 1: find midpoint of edge
       midpt <- (poly2mod[iplus1,] + poly2mod[i,]) / 2
@@ -188,37 +260,45 @@ findBuildable <- function(poly1, poly2 = NULL, debug = FALSE){
       side2 <- midpt - c(0, 1e-3)    ## ***Note: this algorithm won't work if there is only a tiny sliver where the midpoint of segment is. Hopefully this doesn't pose an issue, or we will need to refine the process further...
       offset <- c(0,0)
       # Case A: side1 is inside polygon and outside of hole
-      if (pointInPoly(side1, poly1mod) && !pointInPoly(side1, poly2mod)){
+      if (pointInPoly(side1, poly1mod, offset = 0) && !pointInPoly(side1, poly2mod, offset = 0)){
         offset <- c(0, 8)
         # Just to check that there isn't an error, see if side1 is also valid. If yes, there is some issue that needs to be resolved.
-        if (pointInPoly(side2, poly1mod) && !pointInPoly(side2, poly2mod)){
+        if (pointInPoly(side2, poly1mod, offset = 0) && !pointInPoly(side2, poly2mod, offset = 0)){
           print("Error: side 1 and 2 both valid")
         }
-      }else if(pointInPoly(side2, poly1mod) && !pointInPoly(side2, poly2mod)){ # Case B: side2 is inside polygon and outside of hole
+      }else if(pointInPoly(side2, poly1mod, offset = 0) && !pointInPoly(side2, poly2mod, offset = 0)){ # Case B: side2 is inside polygon and outside of hole
         offset <- c(0, -8)
       }else {
         print("Error: both side 1 and 2 are invalid. Skip")
         next
       }
       # Step 3: construct parallel line segment ("parSeg") 8 ft away in appropriate direction (we will call the two || lines "the ribbon")
-      parSeg <- edge + c(offset, offset)
+      parSeg <- edgeExt + rbind(offset, offset)
       # Step 4: find all intersections between parSeg and other edges (polygon and hole)
       intersections <- vector("numeric",0) # initialize vector to store intersecting X coordinates
-      intersections <- c(intersections, midpt[1] - 10, midpt[1] + 10, edge[1], edge[1] - 20, edge[1] + 20, edge[3], edge[3] - 20, edge[3] + 20)
+      intersections <- c(intersections, midpt[1] - 10, midpt[1] + 10, edge[1,1], edge[1,1] - 20, edge[1,1] + 20, edge[2,1], edge[2,1] - 20, edge[2,1] + 20)
       for (j in 1:nrow(poly1mod)){
         jplus1 <- j %% nrow(poly1mod) + 1
-        seg <- c(poly1mod[j,], poly1mod[jplus1,])
-        # If line segment intersects, add to collection
-        if (segmentsIntersect(seg[1:2], seg[3:4], parSeg[1:2], parSeg[3:4], endsCount = TRUE, eps = 1) == TRUE){
-          intersections <- c(intersections, lineIntersection(seg[1:2], seg[3:4], parSeg[1:2], parSeg[3:4])[1])
+        seg <- rbind(poly1mod[j,], poly1mod[jplus1,])
+        # If line segment intersects with parSeg, add to collection
+        if (segmentsIntersect(seg[1,], seg[2,], parSeg[1,], parSeg[2,], endsCount = TRUE, eps = 1) == TRUE){
+          intersections <- c(intersections, lineIntersection(seg[1,], seg[2,], parSeg[1,], parSeg[2,])[1])
+        }
+        # If line segment intersects with edgeExt, add to collection
+        if (segmentsIntersect(seg[1,], seg[2,], edgeExt[1,], edgeExt[2,], endsCount = TRUE, eps = 1) == TRUE){
+          intersections <- c(intersections, lineIntersection(seg[1,], seg[2,], edgeExt[1,], edgeExt[2,])[1])
         }
       }
       for (j in 1:nrow(poly2mod)){
         jplus1 <- j %% nrow(poly2mod) + 1
-        seg <- c(poly2mod[j,], poly2mod[jplus1,])
-        # If line segment intersects, add to collection
-        if (segmentsIntersect(seg[1:2], seg[3:4], parSeg[1:2], parSeg[3:4], endsCount = TRUE, eps = 1) == TRUE){
-          intersections <- c(intersections, lineIntersection(seg[1:2], seg[3:4], parSeg[1:2], parSeg[3:4])[1])
+        seg <- rbind(poly2mod[j,], poly2mod[jplus1,])
+        # If line segment intersects with parSeg, add to collection
+        if (segmentsIntersect(seg[1,], seg[2,], parSeg[1,], parSeg[2,], endsCount = TRUE, eps = 1) == TRUE){
+          intersections <- c(intersections, lineIntersection(seg[1,], seg[2,], parSeg[1,], parSeg[2,])[1])
+        }
+        # If line segment intersects with edgeExt, add to collection
+        if (segmentsIntersect(seg[1,], seg[2,], edgeExt[1,], edgeExt[2,], endsCount = TRUE, eps = 1) == TRUE){
+          intersections <- c(intersections, lineIntersection(seg[1,], seg[2,], edgeExt[1,], edgeExt[2,])[1])
         }
       }
       
@@ -226,13 +306,13 @@ findBuildable <- function(poly1, poly2 = NULL, debug = FALSE){
       for (j in 1:nrow(poly1mod)){
         pt <- poly1mod[j,]
         # edge = c(x1, y1, x2, y2)
-        if (pt[1] >= edge[1] && pt[1] <= edge[3] && pt[2] >= edge[2] && pt[2] <= edge[4]){
+        if ((pt[2] >= edgeExt[1,2] && pt[2] <= parSeg[1,2]) || (pt[2] <= edgeExt[1,2] && pt[2] >= parSeg[1,2])){
           intersections <- c(intersections, pt[1])
         }
       }
       for (j in 1:nrow(poly2mod)){
         pt <- poly2mod[j,]
-        if (pt[1] >= edge[1] && pt[1] <= edge[3] && pt[2] >= edge[2] && pt[2] <= edge[4]){
+        if ((pt[2] >= edgeExt[1,2] && pt[2] <= parSeg[1,2]) || (pt[2] <= edgeExt[1,2] && pt[2] >= parSeg[1,2])){
           intersections <- c(intersections, pt[1])
         }
       }
@@ -268,12 +348,42 @@ findBuildable <- function(poly1, poly2 = NULL, debug = FALSE){
           rects[[length(rects)+1]] <- rect
         }
       }
+      # Add a rectangle at the midpoint in the other orientation
+      x1 <- midpt[1] - 4
+      x2 <- midpt[1] + 4
+      y1 <- midpt[2]
+      y2 <- midpt[2] + offset[2]/8*20
+      rect <- cbind(c(x1, x2, x2, x1), c(y1, y1, y2, y2))
+      rects[[length(rects)+1]] <- rect
+      # Add two rectangle at the corners in the other orientation
+      left <- edge[1,1]
+      right <- edge[2,1]
+      if (edge[1,1] > edge[2,1]){
+        left <- edge[2,1]
+        right <- edge[1,1]
+      }
+      x1 <- left
+      x2 <- left + 8
+      rect <- cbind(c(x1, x2, x2, x1), c(y1, y1, y2, y2))
+      rects[[length(rects)+1]] <- rect
+      x1 <- left + 8
+      x2 <- left + 16
+      rect <- cbind(c(x1, x2, x2, x1), c(y1, y1, y2, y2))
+      rects[[length(rects)+1]] <- rect
+      x1 <- right - 8
+      x2 <- right
+      rect <- cbind(c(x1, x2, x2, x1), c(y1, y1, y2, y2))
+      rects[[length(rects)+1]] <- rect
+      x1 <- right - 16
+      x2 <- right - 8
+      rect <- cbind(c(x1, x2, x2, x1), c(y1, y1, y2, y2))
+      rects[[length(rects)+1]] <- rect
       
       # Check which rectangles are inside poly and keep them
       if (length(rects) > 0){
         for (j in 1:length(rects)){
           rect <- rects[[j]]
-          if (!polyIntersect(rect, poly1mod) && !polyIntersect(rect, poly2mod) && polyInsidePoly(rect, poly1mod, partial = FALSE) && !polyInsidePoly(rect, poly2mod) && !polyInsidePoly(poly2mod, rect)){
+          if (!polyIntersect(rect, poly1mod) && !polyIntersect(rect, poly2mod) && polyInsidePoly(rect, poly1mod, offset = 1e-5, partial = FALSE) && !polyInsidePoly(rect, poly2mod, offset = 1e-5) && !polyInsidePoly(poly2mod, rect, offset = 1e-5)){
             # Rotate rectangle back to original orientation
             rect <- rotatePoly(rect, angle, poly2[i,])
             rect <- rbind(rect, rect[1,])
@@ -528,10 +638,20 @@ rayIntersectsSegment <- function(p, p1, p2){
 # Checks whether the point p is inside a polygon using the Ray-Casting algorithm
 # Implementation from: http://rosettacode.org/wiki/Ray-casting_algorithm#CoffeeScript
 # If exclusive, points on the polygon are not counted as inside polygon
-pointInPoly <- function(p, poly, exclusive = FALSE, eps = 1e-9){
+pointInPoly <- function(p, poly, exclusive = FALSE, offset = 0, eps = 1e-9){
   if(pointOnPolygon(p, poly, eps)){
     return (!exclusive)
   }
+  # Check if point is within bounding box of poly
+  # xmax <- max(poly[,1])
+  # xmin <- min(poly[,1])
+  # ymax <- max(poly[,2])
+  # ymin <- min(poly[,2])
+  # if (p[1] > xmax + eps || p[1] < xmin - eps || p[2] > ymax + eps || p[1] < ymax - eps){return(FALSE)}
+  
+  p[2] <- p[2] + offset
+  
+  # Go through algorithm
   pf <- p + c(1e10,0)
   n <- nrow(poly)
   b <- poly[n,]
@@ -612,7 +732,7 @@ segmentsIntersect <- function(p1, q1, p2, q2, endsCount = FALSE, eps = 1e-1){
 # Check if polygon polyA is inside polygon polyB
 # Full: If any point of polyA is outside polyB, return FALSE
 # Partial: If any point of polyA is inside polyB, return TRUE
-polyInsidePoly <- function(polyA, polyB, partial = TRUE){
+polyInsidePoly <- function(polyA, polyB, offset = 0, partial = TRUE){
   n <- nrow(polyA)
   # Get midpoints for polyA edges
   a <- polyA[n,]
@@ -628,7 +748,7 @@ polyInsidePoly <- function(polyA, polyB, partial = TRUE){
     # Skip if the points are on polyB
     if (pointOnPolygon(polyA[i,], polyB)){next}
     # If the point is inside and not on polyB, return TRUE. Otherwise, keep going
-    else if (!pointInPoly(polyA[i,], polyB, exclusive = TRUE)){
+    else if (!pointInPoly(polyA[i,], polyB, offset, exclusive = TRUE)){
       if (partial){next}
       else{return(FALSE)}
     }
@@ -637,10 +757,6 @@ polyInsidePoly <- function(polyA, polyB, partial = TRUE){
       else{next}
     }
   }
-  # n <- nrow(polyB)
-  # for (i in 1:n){
-  #   if (pointInPoly(polyB[i,], polyA, exclusive = TRUE)) {return (FALSE)}
-  # }
   # If all points pass, return TRUE
   if (partial) {return(FALSE)}
   else{return (TRUE)}
