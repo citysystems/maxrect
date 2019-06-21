@@ -20,8 +20,8 @@ largestRect <- function(polygon, print = FALSE, debug = FALSE){
   if (print){
     color_transparent <- adjustcolor(2, alpha.f = 0.5)
     
-    plot(st_geometry(polygon), col = 'green', axes = TRUE)
     result <- findBuildable(poly1, poly2, debug)
+    plot(st_geometry(polygon), col = 'green', axes = TRUE)
     plot(st_geometry(result), col = color_transparent, add = TRUE)
     return(result)
   }
@@ -32,12 +32,14 @@ largestRect <- function(polygon, print = FALSE, debug = FALSE){
 
 ## New customized algorithm (V2)
 
-tsrects <<- NULL
-tsedge <<- NULL
-tsparSeg <<- NULL
-tspoly1mod <<- NULL
-tspoly2mod <<- NULL
-tsintersections <<- NULL
+# tsrects <<- NULL
+# tsedge <<- NULL
+# tsparSeg <<- NULL
+# tspoly1mod <<- NULL
+# tspoly2mod <<- NULL
+# tspoly1modsf <<- NULL
+# tspoly2modsf <<- NULL
+# tsintersections <<- NULL
 
 findBuildable <- function(poly1, poly2 = NULL, debug = FALSE){
   # Make sure that polygons are not closed
@@ -60,7 +62,11 @@ findBuildable <- function(poly1, poly2 = NULL, debug = FALSE){
     iplus1 <- i%%nrow(poly1) + 1
     angle <- atan2((poly1[iplus1,2]-poly1[i,2]),(poly1[iplus1,1]-poly1[i,1]))
     poly1mod <- rotatePoly(poly1, -angle, poly1[i,])
-    if (h) {poly2mod <- rotatePoly(poly2, -angle, poly1[i,])}
+    poly1modsf <- st_polygon(list(rbind(poly1mod, poly1mod[1,]))) %>% st_buffer(1e-1, nQuadSegs = 3)
+    if (h) {
+      poly2mod <- rotatePoly(poly2, -angle, poly1[i,])
+      poly2modsf <- st_polygon(list(rbind(poly2mod, poly2mod[1,])))%>% st_buffer(-1e-1, nQuadSegs = 3)
+    }
     if (debug) { print(poly1mod)}
     # eqscplot(poly1mod, type='l')
     edge <- rbind(poly1mod[i,],poly1mod[iplus1,]) # edge = rbind(c(x1, y1), c(x2, y2))
@@ -174,7 +180,7 @@ findBuildable <- function(poly1, poly2 = NULL, debug = FALSE){
         if (abs(x2-x1) < 20){
           next
         }
-        rect <- cbind(c(x1, x2, x2, x1), c(y1, y1, y2, y2))
+        rect <- cbind(c(x1, x2, x2, x1, x1), c(y1, y1, y2, y2, y1))
         rects[[length(rects)+1]] <- rect
       }
     }
@@ -183,7 +189,7 @@ findBuildable <- function(poly1, poly2 = NULL, debug = FALSE){
     x2 <- midpt[1] + 4
     y1 <- midpt[2]
     y2 <- midpt[2] + offset[2]/8*20
-    rect <- cbind(c(x1, x2, x2, x1), c(y1, y1, y2, y2))
+    rect <- cbind(c(x1, x2, x2, x1, x1), c(y1, y1, y2, y2, y1))
     rects[[length(rects)+1]] <- rect
     # Add two rectangle at the corners in the other orientation
     left <- edge[1,1]
@@ -194,19 +200,19 @@ findBuildable <- function(poly1, poly2 = NULL, debug = FALSE){
     }
     x1 <- left
     x2 <- left + 8
-    rect <- cbind(c(x1, x2, x2, x1), c(y1, y1, y2, y2))
+    rect <- cbind(c(x1, x2, x2, x1, x1), c(y1, y1, y2, y2, y1))
     rects[[length(rects)+1]] <- rect
     x1 <- left + 8
     x2 <- left + 16
-    rect <- cbind(c(x1, x2, x2, x1), c(y1, y1, y2, y2))
+    rect <- cbind(c(x1, x2, x2, x1, x1), c(y1, y1, y2, y2, y1))
     rects[[length(rects)+1]] <- rect
     x1 <- right - 8
     x2 <- right
-    rect <- cbind(c(x1, x2, x2, x1), c(y1, y1, y2, y2))
+    rect <- cbind(c(x1, x2, x2, x1, x1), c(y1, y1, y2, y2, y1))
     rects[[length(rects)+1]] <- rect
     x1 <- right - 16
     x2 <- right - 8
-    rect <- cbind(c(x1, x2, x2, x1), c(y1, y1, y2, y2))
+    rect <- cbind(c(x1, x2, x2, x1, x1), c(y1, y1, y2, y2, y1))
     rects[[length(rects)+1]] <- rect
     if (debug) {print(rects, digits = 10)}
     
@@ -226,13 +232,20 @@ findBuildable <- function(poly1, poly2 = NULL, debug = FALSE){
     # Check which rectangles are inside poly and keep them
     if (length(rects) > 0){
       for (j in 1:length(rects)){
-        rect <- rects[[j]]
-        if (!polyIntersect(rect, poly1mod) && polyInsidePoly(rect, poly1mod, offset = 1e-7, partial = FALSE) && (!h || (h && !polyIntersect(rect, poly2mod) && !polyInsidePoly(rect, poly2mod, offset = 1e-7) && !polyInsidePoly(poly2mod, rect, offset = 1e-7)))){
-          # Rotate rectangle back to original orientation
-          rect <- rotatePoly(rect, angle, poly1[i,])
-          rect <- rbind(rect, rect[1,])
+        rect <- st_polygon(list(rects[[j]]))
+        
+        # If rectangle is inside poly1mod (and outside of poly2mod)
+        if (st_contains(poly1modsf, rect, sparse = FALSE) && (!h || (h && !st_overlaps(rect, poly2modsf, sparse = FALSE)))){
+          rect <- rotatePoly(st_coordinates(rect)[,1:2], angle, poly1[i,])
           validRects[[length(validRects)+1]] <- rect
         }
+        
+        # if (!polyIntersect(rect, poly1mod) && polyInsidePoly(rect, poly1mod, offset = 1e-7, partial = FALSE) && (!h || (h && !polyIntersect(rect, poly2mod) && !polyInsidePoly(rect, poly2mod, offset = 1e-7) && !polyInsidePoly(poly2mod, rect, offset = 1e-7)))){
+        #   # Rotate rectangle back to original orientation
+        #   rect <- rotatePoly(rect, angle, poly1[i,])
+        #   rect <- rbind(rect, rect[1,])
+        #   validRects[[length(validRects)+1]] <- rect
+        # }
       }
       if (debug) {print(validRects, digits = 4)}
     }
@@ -248,7 +261,9 @@ findBuildable <- function(poly1, poly2 = NULL, debug = FALSE){
       iplus1 <- i%%nrow(poly2) + 1
       angle <- atan2((poly2[iplus1,2]-poly2[i,2]),(poly2[iplus1,1]-poly2[i,1]))
       poly1mod <- rotatePoly(poly1, -angle, poly2[i,])
+      poly1modsf <- st_polygon(list(rbind(poly1mod, poly1mod[1,]))) %>% st_buffer(1e-1, nQuadSegs = 3)
       poly2mod <- rotatePoly(poly2, -angle, poly2[i,])
+      poly2modsf <- st_polygon(list(rbind(poly2mod, poly2mod[1,])))%>% st_buffer(-1e-1, nQuadSegs = 3)
       edge <- rbind(poly2mod[i,],poly2mod[iplus1,]) # edge = c(x1, y1, x2, y2)
       vec <- edge[2,] - edge[1,]
       edgeExt <- rbind(edge[1,] - 1000*vec, edge[2,] + 1000*vec)
@@ -320,12 +335,16 @@ findBuildable <- function(poly1, poly2 = NULL, debug = FALSE){
       # Get rid of redundant X coordinates
       intersections <- round(intersections, digits = 5)
       intersections <- unique(intersections)
-      
+      if (debug) {print(edge, digits = 4)}
+      if (debug) {print(parSeg, digits = 4)}
+      if (debug) {print(intersections, digits = 4)}
       # Step 6: Construct all possible rectangles
       # Initialize list vector for rectangle coordinates
       rects <- vector(mode = "list", length = 0)
       for (j in 1:(length(intersections)-1)){
+        if (debug) {print(paste("j =", j))}
         for (k in (j+1):length(intersections)){
+          if (debug) {print(paste("k =", k))}
           x1 <- intersections[j]
           x2 <- intersections[k]
           y1 <- midpt[2]
@@ -344,7 +363,7 @@ findBuildable <- function(poly1, poly2 = NULL, debug = FALSE){
           if (abs(x2-x1) < 20){
             next
           }
-          rect <- cbind(c(x1, x2, x2, x1), c(y1, y1, y2, y2))
+          rect <- cbind(c(x1, x2, x2, x1, x1), c(y1, y1, y2, y2, y1))
           rects[[length(rects)+1]] <- rect
         }
       }
@@ -353,7 +372,7 @@ findBuildable <- function(poly1, poly2 = NULL, debug = FALSE){
       x2 <- midpt[1] + 4
       y1 <- midpt[2]
       y2 <- midpt[2] + offset[2]/8*20
-      rect <- cbind(c(x1, x2, x2, x1), c(y1, y1, y2, y2))
+      rect <- cbind(c(x1, x2, x2, x1, x1), c(y1, y1, y2, y2, y1))
       rects[[length(rects)+1]] <- rect
       # Add two rectangle at the corners in the other orientation
       left <- edge[1,1]
@@ -364,31 +383,55 @@ findBuildable <- function(poly1, poly2 = NULL, debug = FALSE){
       }
       x1 <- left
       x2 <- left + 8
-      rect <- cbind(c(x1, x2, x2, x1), c(y1, y1, y2, y2))
+      rect <- cbind(c(x1, x2, x2, x1, x1), c(y1, y1, y2, y2, y1))
       rects[[length(rects)+1]] <- rect
       x1 <- left + 8
       x2 <- left + 16
-      rect <- cbind(c(x1, x2, x2, x1), c(y1, y1, y2, y2))
+      rect <- cbind(c(x1, x2, x2, x1, x1), c(y1, y1, y2, y2, y1))
       rects[[length(rects)+1]] <- rect
       x1 <- right - 8
       x2 <- right
-      rect <- cbind(c(x1, x2, x2, x1), c(y1, y1, y2, y2))
+      rect <- cbind(c(x1, x2, x2, x1, x1), c(y1, y1, y2, y2, y1))
       rects[[length(rects)+1]] <- rect
       x1 <- right - 16
       x2 <- right - 8
-      rect <- cbind(c(x1, x2, x2, x1), c(y1, y1, y2, y2))
+      rect <- cbind(c(x1, x2, x2, x1, x1), c(y1, y1, y2, y2, y1))
       rects[[length(rects)+1]] <- rect
+      if (debug) {print(rects, digits = 10)}
+      
+      # if (i == 2){
+      #   tsrects <<- rects
+      #   tsedge <<- edgeExt
+      #   tsparSeg <<- parSeg
+      #   tspoly1mod <<- poly1mod
+      #   tspoly1modsf <<- poly1modsf
+      #   if (h){
+      #     tspoly2mod <<- poly2mod
+      #     tspoly2modsf <<- poly2modsf
+      #   }
+      #   tsintersections <<- intersections
+      #   return()
+      # }
+      
       
       # Check which rectangles are inside poly and keep them
       if (length(rects) > 0){
         for (j in 1:length(rects)){
-          rect <- rects[[j]]
-          if (!polyIntersect(rect, poly1mod) && !polyIntersect(rect, poly2mod) && polyInsidePoly(rect, poly1mod, offset = 1e-5, partial = FALSE) && !polyInsidePoly(rect, poly2mod, offset = 1e-5) && !polyInsidePoly(poly2mod, rect, offset = 1e-5)){
-            # Rotate rectangle back to original orientation
-            rect <- rotatePoly(rect, angle, poly2[i,])
-            rect <- rbind(rect, rect[1,])
+          rect <- st_polygon(list(rects[[j]]))
+          
+          # If rectangle is inside poly1mod (and outside of poly2mod)
+          if (debug) {print(paste("Inside poly1: ", (st_contains(poly1modsf, rect, sparse = FALSE) == TRUE), " and outside poly2: ", (st_overlaps(rect, poly2modsf, sparse = FALSE) == FALSE)))}
+          if (st_contains(poly1modsf, rect, sparse = FALSE) && !st_overlaps(rect, poly2modsf, sparse = FALSE)){
+            rect <- rotatePoly(st_coordinates(rect)[,1:2], angle, poly2[i,])
             validRects[[length(validRects)+1]] <- rect
           }
+          
+          # if (!polyIntersect(rect, poly1mod) && !polyIntersect(rect, poly2mod) && polyInsidePoly(rect, poly1mod, offset = 1e-5, partial = FALSE) && !polyInsidePoly(rect, poly2mod, offset = 1e-5) && !polyInsidePoly(poly2mod, rect, offset = 1e-5)){
+          #   # Rotate rectangle back to original orientation
+          #   rect <- rotatePoly(rect, angle, poly2[i,])
+          #   rect <- rbind(rect, rect[1,])
+          #   validRects[[length(validRects)+1]] <- rect
+          # }
         }
       }
     }
@@ -398,15 +441,16 @@ findBuildable <- function(poly1, poly2 = NULL, debug = FALSE){
     for (j in 1:length(validRects)){
       rects[[j]] <- st_polygon(list(validRects[[j]]))
     }
-    merged_rects <- st_sfc(rects) %>% st_cast("POLYGON") %>% st_buffer(0) %>% st_union()
+    merged_rects <- st_sfc(rects) %>% st_cast("POLYGON")
+    merged_rects <- merged_rects %>% st_snap(merged_rects, tolerance = 0.1) %>% st_buffer(0) %>% st_union()
     # merged_rects <- merged_rects + c(minX,minY)
     sf <- st_sfc(merged_rects)
     print("success")
     return(sf)
   } else { # Case 2: Nothing to show
-    # sf <- st_sfc(st_polygon())
-    # print("empty polygon")
-    return("Empty polygon")
+    sf <- st_sfc(st_polygon())
+    print("empty polygon")
+    return(sf)
   }
 }
 
