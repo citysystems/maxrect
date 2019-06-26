@@ -12,6 +12,8 @@ library(ggplot2)
 library(ggrepel)
 library(sf)
 library(lwgeom)
+library(smoothr)
+library(mapview)
 
 ### Note: In order for the find_lr function to work as we intend (pulling all possible buildable area), we need to change the largestRect.coffee in the R library "3.5/maxrectangle/js" folder
 
@@ -1241,10 +1243,72 @@ save.image("G.RData")
 #############################################
 #########EXPLORE HERE#################################
 
+for (i in 1:nrow(result_Bldg0)){
+  print(i)
+  largestRect(result_Bldg0[i,], print = TRUE)
+}
+
 # To show the result for an index:
 # Choose a value for i
 i <- 1
 largestRect(result_Bldg0[i,], print = TRUE)
+
+test <- bldg0_buildable[7,]
+# Set CRS as 102643
+test <- test %>% st_set_crs(102643)
+test2 <- fill_holes(test, 1000)
+plot(test)
+plot(test2)
+
+result_Bldg0 <- result_Bldg0 %>% st_set_crs(102643)
+bldg0_buildable <- bldg0_buildable %>% st_set_crs(102643)
+
+result_Bldg0_offset <- result_Bldg0
+
+# Return geometries to original coordinates, no offsets
+for(i in 1:nrow(result_Bldg0)){
+  offset <- c(result_Bldg0$xmin[i], result_Bldg0$ymin[i])
+  result_Bldg0$geometry[i] <- result_Bldg0$geometry[i] + offset
+  result_Bldg0$xmin[i] <- 0
+  result_Bldg0$ymin[i] <- 0
+}
+
+
+rownames(test) <- c()
+saveAPN <- test$APN[1]
+for(i in 1:nrow(test)){
+  offset <- c(test$xmin[i], test$ymin[i])
+  test$geometry[i] <- test$geometry[i] + offset
+  test$xmin[i] <- 0
+  test$ymin[i] <- 0
+}
+
+
+# https://github.com/r-spatial/sf/issues/290
+
+result_Bldg0_combined <- result_Bldg0 %>% filter(inBox == TRUE)
+result_Bldg0_combined <- st_sf(APN = result_Bldg0_combined$APN %>% unique(), geometry = result_Bldg0_combined %>% split(.$APN) %>% lapply(st_union) %>% do.call(c, .) %>% st_cast())
+bldg0_buildable_combine <- st_sf(APN = bldg0_buildable$APN %>% unique(), geometry = bldg0_buildable %>% split(.$APN) %>% lapply(st_union) %>% do.call(c, .) %>% st_cast())
+
+EPAbbox <- st_bbox(st_combine(bldg_all)) + c(-1000, -1000, 1000, 1000)
+
+# Check which result_Bldg0 results need to be fixed. Filter out the ones that show up outside of the EPAbbox
+test <- result_Bldg0
+result_Bldg0$inBox <- FALSE
+for (i in 1:nrow(result_Bldg0)){
+  print(i)
+  bbox <- st_bbox(result_Bldg0[i,])
+  if (is.na(bbox[1])){next}
+  if (bbox[1] >= EPAbbox[1] && bbox[2] >= EPAbbox[2] && bbox[3] <= EPAbbox[3] && bbox[4] <= EPAbbox[4]){
+    result_Bldg0$inBox[i] = TRUE
+  }
+}
+
+mapview(result_Bldg0_combined)
+
+for i in 1:nrow(bldg0_buildable_combine){
+  offset
+}
 
 # The function will plot the total buildable area in green, and the result in a transparent red
 # The result will look like a brown-green
