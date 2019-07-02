@@ -2,7 +2,7 @@
 # Input: st_polygon. May contain holes, need to separate those out
 largestRect <- function(polygon, print = FALSE, debug = FALSE){
   poly <- st_geometry(polygon)
-  if (st_area(poly) < 160){return ("Area less than 160")}
+  if (as.numeric(st_area(poly)) < 160){return ("Area less than 160")}
   if (st_is_empty(poly)){return ("Empty geometry")}
   if (!st_is_valid(poly)){return ("Invalid geometry")}
   
@@ -25,8 +25,6 @@ largestRect <- function(polygon, print = FALSE, debug = FALSE){
     plot(st_geometry(result), col = color_transparent, add = TRUE)
     return(result)
   }
-  
-  return(findBuildable(poly1, poly2, debug))
 }
 
 
@@ -444,11 +442,11 @@ findBuildable <- function(poly1, poly2 = NULL, debug = FALSE){
     merged_rects <- st_sfc(rects) %>% st_cast("POLYGON")
     merged_rects <- merged_rects %>% st_snap(merged_rects, tolerance = 0.1) %>% st_buffer(0) %>% st_union()
     # merged_rects <- merged_rects + c(minX,minY)
-    sf <- st_sfc(merged_rects)
+    sf <- st_sfc(merged_rects, crs = 102643)
     print("success")
     return(sf)
   } else { # Case 2: Nothing to show
-    sf <- st_sfc(st_polygon())
+    sf <- st_sfc(st_polygon(), crs = 102643)
     print("empty polygon")
     return(sf)
   }

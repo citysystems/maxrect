@@ -2,6 +2,7 @@
 # devtools::install_git('https://gitlab.com/b-rowlingson/maxrectangle')
 
 library(maxrectangle)
+library(geojsonsf)
 library(jsonlite)
 library(readr)
 library(MASS)
@@ -15,61 +16,73 @@ library(lwgeom)
 library(smoothr)
 library(mapview)
 
+# Transform to CRS: 102643 (NAD 1983 State Plane California, units = us-ft)
+parcels <- read_sf(dsn = "epaparcels", layer = "epaparcelsSFH_redo") %>% st_transform(., crs = 102643)
+
+# Way to view the shapefiles
+# mapview(parcels) + mapview(bldgs)
+
+# Order by APN
+parcels <- parcels %>% arrange(APN)
+
+
 ### Note: In order for the find_lr function to work as we intend (pulling all possible buildable area), we need to change the largestRect.coffee in the R library "3.5/maxrectangle/js" folder
 
 # To save current environment
 # save.image(".RData")
 
 ### parcels
-file_parcel <- "epaparcels_clean_NAD83.geojson"
-parcels <- fromJSON(txt=file_parcel, flatten = TRUE, simplifyDataFrame = TRUE)
-parcels <- parcels$features
+# file_parcel <- "epaparcels_clean_NAD83.geojson"
+# parcels <- fromJSON(txt=file_parcel, flatten = TRUE, simplifyDataFrame = TRUE)
+# parcels <- parcels$features
+
 # Filter down to 3920 SFH parcels
-file_apn <- "apn.csv"
-apn <- read_csv(file_apn)
-apn <- paste( "0", apn$apn, sep = "")
-parcels <- dplyr::filter(parcels, properties.APN %in% apn)
+list_apn <- read_csv("apn.csv")
+list_apn <- paste0( "0", list_apn$apn)
+parcels <- parcels %>% filter(APN %in% list_apn)
+
 ### Join parcels to their address streets
-file_street <- "apn_street.csv"
-street <- read_csv(file_street)
+street <- read_csv("apn_street.csv")
 street$apn <- paste0( "0", street$apn)
-parcels <- parcels %>% inner_join(street, by = c("properties.APN" = "apn"))
-ord <- sort.list(parcels$properties.APN)
-parcels <- parcels[ord,]
-numPar <- nrow(parcels)
-rownames(parcels) <- 1:numPar
-parcel <- parcels$geometry.coordinates
+parcels <- parcels %>% inner_join(street, by = c("APN" = "apn"))
 
 ### roads
-file_roads <- "epa_roads_adj_NAD83.geojson"
-roads <- fromJSON(txt=file_roads, flatten = TRUE, simplifyDataFrame = TRUE)
-roads <- roads$features
+# file_roads <- "epa_roads_adj_NAD83.geojson"
+# roads <- fromJSON(txt=file_roads, flatten = TRUE, simplifyDataFrame = TRUE)
+# 
+roads <- read_sf("epa_roads_adj_NAD83.geojson") %>% select(name = FULLNAME) %>% arrange(name)
+# Combining sf objects by attribute https://github.com/r-spatial/sf/issues/290
+roads_combined <- st_sf(name = roads$name %>% unique() %>% .[1:161], 
+                        geometry = test %>% split(.$name) %>% lapply(st_union) %>% do.call(c, .) %>% st_cast())
 
-
-# Initialize column for storing road segments
-parcels[,"list_roads"] <- NA
-for (i in 1:numPar){
-  parcels$list_roads[i] <- list(roads %>% filter(toupper(properties.FULLNAME) == toupper(parcels$address[[i]])))
-}
+# # Initialize column for storing road segments
+# parcels[,"list_roads"] <- NA
+# for (i in 1:length(parcel)){
+#   parcels$list_roads[i] <- list(roads %>% filter(toupper(properties.FULLNAME) == toupper(parcels$address[[i]])))
+# }
 
 
 ### coordinates of front
-file_blocks <- "front_vertices_cleaned_NAD83.geojson"
-blocks <- fromJSON(txt=file_blocks, flatten = TRUE, simplifyDataFrame = TRUE, simplifyMatrix = TRUE)
-blocks <- blocks$features$geometry.coordinates
-blockPts <- array(data = 0, dim = c(length(blocks), 2))
-for(i in 1:length(blocks)){
-  if(is.null(blocks[[i]]) || typeof(blocks[[i]]) != "double"){next}
-  blockPts[i,1] <- blocks[[i]][1]
-  blockPts[i,2] <- blocks[[i]][2]
-}
-blockPts <- blockPts[blockPts[,1] != 0,]
-blockPts <- blockPts[order( blockPts[,1], blockPts[,2]),]
-blockPts <- unique(blockPts)
+# file_blocks <- "front_vertices_cleaned_NAD83.geojson"
+blocks <- read_sf(dsn = "epablocks", layer = "front_vertices_redo") %>% st_transform(., crs = 102643)
+blockPts <- st_coordinates(blocks)[,1:2]
+blockPts <- blockPts[order(blockPts[,1], blockPts[,2]),] %>% unique()
+
+# blocks <- fromJSON(txt=file_blocks, flatten = TRUE, simplifyDataFrame = TRUE, simplifyMatrix = TRUE)
+# blocks <- blocks$features$geometry.coordinates
+# blockPts <- array(data = 0, dim = c(length(blocks), 2))
+# for(i in 1:length(blocks)){
+#   if(is.null(blocks[[i]]) || typeof(blocks[[i]]) != "double"){next}
+#   blockPts[i,1] <- blocks[[i]][1]
+#   blockPts[i,2] <- blocks[[i]][2]
+# }
+# blockPts <- blockPts[blockPts[,1] != 0,]
+# blockPts <- blockPts[order( blockPts[,1], blockPts[,2]),]
+# blockPts <- unique(blockPts)
 
 ######## Rdata of all the raw data
 ##########################################
-save.image("A.RData")
+save.image("A2.RData")
 ##########################################
 
 # ### parcels
@@ -104,7 +117,7 @@ save.image("A.RData")
 # Outputs a boolean
 isFront <- function(point){
   # Check if point matches blocks
-  index <- findInterval(point[1], blockPts[,1])  # This index may be +/- 1 from the actual value
+  index <- findInterval(point[1] - 1, blockPts[,1])  # This index may be +/- 1 from the actual value
   if (index > 0) {index <- index - 1}                   # Move back one
   for (i in 1:3){                      # Make sure a minimum of three iterations done before stopping
     while((index > 0) && (index <= dim(blockPts)[1]) && (abs(point[1] - blockPts[index,1]) <= 1.5)){         # search all coordinates w/ same X coord
@@ -144,35 +157,32 @@ removeCollinear <- function(arr){
   return(arr)
 }
 
+# Create a variable that works directly with parcel coordinates (vector of lists)
+parcel <- vector("list", nrow(parcels))
+for (i in 1:nrow(parcels)){
+  # print(i)
+  parcel[[i]] <- st_coordinates(parcels[i,])[,1:2] %>% unique()
+  parcel[[i]] <- rbind(parcel[[i]], parcel[[i]][1,])
+}
+
 # Remove collinear points from parcels
-for (i in 1:numPar){
-  arr <- drop(parcel[[i]])
+for (i in 1:length(parcel)){
+  # print(i)
+  arr <- parcel[[i]]
   parcel[[i]] <- removeCollinear(arr)
 }
 
 # Find number of landlocked parcels (all points are touching another parcel)
 # First, pull all the coordinates for the first polygon for each parcel
-checkFront <- vector("logical", numPar)   # Keep track of whether a parcel touches the front
-numFront <- vector("double", numPar)      # Keep track of number of points that touch the front
-# indexFront <- vector("list", numPar)      # Keep track of index of points that touch the front
-for (i in 1:numPar){
+checkFront <- vector("logical", length(parcel))   # Keep track of whether a parcel touches the front
+numFront <- vector("double", length(parcel))      # Keep track of number of points that touch the front
+# indexFront <- vector("list", length(parcel))      # Keep track of index of points that touch the front
+for (i in 1:length(parcel)){
   print(i)
-  if (typeof(parcel[[i]]) == "list"){
-    poly <- unique(drop(parcel[[i]][[1]]))
-  }
-  else if (typeof(parcel[[i]]) == "double"){
-    # if (length(dim(parcel[[i]])) > 3){
-      # poly <- drop(parcel[[i]])[1,,]
-      poly <- unique(drop(parcel[[i]]))
-    # }
-    # else{poly <- unique(parcel[[i]][1,,])}
-  }
-  else{
-    break
-  }
+  poly <- parcel[[i]]
   # poly <- rbind(poly, poly[1,])
-  parcel[[i]] <- cbind(poly, vector(length = dim(poly)[1]))
-  for (j in 1:dim(poly)[1]){
+  parcel[[i]] <- cbind(poly, vector(length = nrow(poly)))
+  for (j in 1:(nrow(poly)-1)){
     if (isFront(poly[j,])){
       checkFront[i] <- TRUE
       parcel[[i]][j,3] <- TRUE
@@ -181,25 +191,25 @@ for (i in 1:numPar){
   }
 }
 
-# sum(checkFront)
-# table(numFront)
+sum(checkFront)
+table(numFront)
 
 # Front indices may be out of order if the polygon starting point is in the middle of the front
-chunks <- vector("double", numPar)              # chunks of points marked as front
-false_chunks <- vector("double", numPar)        # chunks of points not marked as front (used to ID problems)
-# offsetFront <- vector("double", numPar)         # what number of points to move to the back
-# deleteFront <- vector("double", numPar)         # what index point to remove
-chunks2 <- vector("double", numPar)              # chunks of points marked as front
-false_chunks2 <- vector("double", numPar)        # chunks of points not marked as front (used to ID problems)
-chunks3 <- vector("double", numPar)              # chunks of points marked as front
-false_chunks3 <- vector("double", numPar)        # chunks of points not marked as front (used to ID problems)
-for (i in 1:numPar){
+chunks <- vector("double", length(parcel))              # chunks of points marked as front
+false_chunks <- vector("double", length(parcel))        # chunks of points not marked as front (used to ID problems)
+# offsetFront <- vector("double", length(parcel))         # what number of points to move to the back
+# deleteFront <- vector("double", length(parcel))         # what index point to remove
+chunks2 <- vector("double", length(parcel))              # chunks of points marked as front
+false_chunks2 <- vector("double", length(parcel))        # chunks of points not marked as front (used to ID problems)
+chunks3 <- vector("double", length(parcel))              # chunks of points marked as front
+false_chunks3 <- vector("double", length(parcel))        # chunks of points not marked as front (used to ID problems)
+for (i in 1:length(parcel)){
   print(i)
   preVal <- FALSE
-  arr <- parcel[[i]]
+  arr <- parcel[[i]][-nrow(parcel[[i]]),]
   # print(parcel[[i]])
   # print(arr)
-  for (j in 1:dim(arr)[1]){
+  for (j in 1:nrow(arr)){
     if (j == 1 && arr[j,3] == 1){chunks[i] <- chunks[i] + 1}
     else if (j == 1 && arr[j,3] == 0){false_chunks[i] <- false_chunks[i] + 1}
     else if (preVal == FALSE && arr[j,3] == 1){chunks[i] <- chunks[i] + 1}
@@ -257,7 +267,7 @@ for (i in 1:numPar){
     preVal <- arr[j,3]
   }
   parcel[[i]] <- rbind(arr, arr[1,])
-  parcel[[i]][dim(parcel[[i]])[1],3] <- 0
+  parcel[[i]][nrow(parcel[[i]]),3] <- 0
 }
 
 # table(chunks)
@@ -313,10 +323,10 @@ plotParcel <- function(index, type = "Original"){
 }
 
 # Keep track of parcels that need to be manually fixed
-misfits <- vector("logical", numPar)
+misfits <- vector("logical", length(parcel))
 
 # Check if front edge is properly extracted
-for (i in 1:numPar){
+for (i in 1:length(parcel)){
   print(i)
   if (is.null(parcelFront(i))) {misfits[i] <- TRUE}
   numFront[i] <- sum(parcel[[i]][,3])
@@ -329,8 +339,8 @@ for (i in 1:numPar){
 }
 
 # Identify corner lots
-cornerStats <- vector(mode = "list", numPar)
-for (i in 1:numPar){
+cornerStats <- vector(mode = "list", length(parcel))
+for (i in 1:length(parcel)){
   print(i)
   if(is.null(parcelFront(i))) {next}              # Skip landlocked
   # else if (dim(parcelFront(i))[1] < 3) {next}     # Skip parcels with 1 or 2 front points (most likly not a corner)
@@ -358,8 +368,8 @@ for (i in 1:numPar){
 
 
 ## Look at the break down of slope differences across parcels to figure out what is a good threshold
-segDiff <- array(dim = c(numPar,2))
-for (i in 1:numPar){
+segDiff <- array(dim = c(length(parcel),2))
+for (i in 1:length(parcel)){
   if (is.null(cornerStats[[i]])) {
     segDiff[i,1] <- NA
   }
@@ -367,7 +377,7 @@ for (i in 1:numPar){
     segDiff[i,1] <- abs(cornerStats[[i]]$segdiff)/pi*180
   }
 }
-segDiff[,2] <- 1:numPar
+segDiff[,2] <- 1:length(parcel)
 colnames(segDiff) <- c("diff", "index")
 segDiff <- na.omit(segDiff)
 
@@ -381,8 +391,8 @@ tibble(val = segDiff[,1]) %>%
   scale_y_continuous(labels = scales::percent)
 
 ## Look at break down of totdiff
-totDiff <- array(dim = c(numPar,2))
-for (i in 1:numPar){
+totDiff <- array(dim = c(length(parcel),2))
+for (i in 1:length(parcel)){
   if (is.null(cornerStats[[i]])) {
     totDiff[i,1] <- NA
   }
@@ -390,7 +400,7 @@ for (i in 1:numPar){
     totDiff[i,1] <- abs(min(cornerStats[[i]]$totdiff1, cornerStats[[i]]$totdiff2))/pi*180
   }
 }
-totDiff[,2] <- 1:numPar
+totDiff[,2] <- 1:length(parcel)
 colnames(totDiff) <- c("totdiff", "index")
 totDiff <- na.omit(totDiff)
 
@@ -401,8 +411,8 @@ tibble(val = totDiff[,1]) %>%
   # scale_x_continuous(limits = c(0, 90))
 
 
-isCorner <- vector("logical", numPar)
-for (i in 1:numPar){
+isCorner <- vector("logical", length(parcel))
+for (i in 1:length(parcel)){
   if (is.null(cornerStats[[i]])) {next}
   # if mostly straight, skip   *********************** try taking out this test
   # if (abs(cornerStats[[i]]$totdiff1) < (20/180*pi) || abs(cornerStats[[i]]$totdiff2) < (20/180*pi)) {next}
@@ -503,7 +513,7 @@ crossprod2D <- function(u, v){
 }
 
 ########################################################
-save.image("B.RData")
+save.image("B2.RData")
 ########################################################
 
 # Extract front edge for corner lot
@@ -511,53 +521,48 @@ save.image("B.RData")
 # Of the two ends of the front, choose the point shortest normal dist to roadway
 # Select edges that are within a certain angle of the segment on this end
 modParcel <- parcel
-roadway <- vector("list", numPar)
-closestRoad <- vector("list", numPar)
-slopeDiffs <- vector("double", numPar)
-orderRead <- vector("character", numPar)
-for (i in 1:numPar){
+roadway <- vector("list", length(parcel))
+closestRoad <- vector("list", length(parcel))
+slopeDiffs <- vector("double", length(parcel))
+orderRead <- vector("character", length(parcel))
+for (i in 1:length(parcel)){
   print(i)
-  par_cent <- colMeans(drop(parcel[[i]]))      # Get the parcel centroid
-  # Extract associated road
-  roads <- parcels$list_roads[[i]]$geometry.coordinates     # Get the list
-  # Find two closest points on roadway network to parcel centroid
-  minDist1 <- 1e99
-  minDist2 <- 1e99
-  point1 <- vector(length = 2)
-  point2 <- vector(length = 2)
-  road_arr <- array(dim = c(0,2))
-  for (j in 1:length(roads)){
-    if (typeof(roads[[j]]) == "list"){
-      for (k in 1:length(roads[[j]])){
-        road_arr <- rbind(road_arr, drop(roads[[j]][[k]]))
+  par_cent <- as.vector(st_coordinates(st_centroid(parcels[i,])))
+  
+  roadname <- parcels$address[i]
+  ind <- match(tolower(roadname), tolower(roads$name))
+  if (is.na(ind)){
+    print("Street not found")
+    print(roadname)
+    break
+  }
+  # Extract associated road, separate out invidual linestrings
+  road <- st_geometry(roads[ind,]) %>% st_cast("LINESTRING")
+  
+  # Find closest point on roadway to parcel centroid
+  minDist <- 1e99
+  seg <- vector(length = 2)
+  # Grab midpoints of each line segment
+  for (j in 1:length(road)){
+    linestring <- st_coordinates(road[j])[,1:2]
+    for (k in 1:(nrow(linestring)-1)){
+      midpt <- (linestring[k,] + linestring[k+1,])/2
+      dist <- ((par_cent[1] - midpt[1])/100000)^2 + ((par_cent[2] - midpt[2])/100000)^2
+      if (dist < minDist){
+        minDist <- dist
+        seg <- linestring[k:(k+1),]
       }
-    } else{
-      road_arr <- rbind(road_arr, drop(roads[[j]]))
     }
   }
-  road_arr <- unique(road_arr)
-  roadway[[i]] <- road_arr
-  dist <- vector(length = dim(road_arr)[1])
-  for (j in 1:dim(road_arr)[1]){
-    dist[j] <- ((par_cent[1]-road_arr[j,1])/100000)^2 + ((par_cent[2]-road_arr[j,2])/100000)^2
-  }
-  # print(dist)
-  ord <- order(dist)
-  # print(ord)
-  road_arr <- road_arr[ord,]
-  point1 <- road_arr[1,]
-  point2 <- road_arr[2,]
-
-  closestRoad[[i]] <- rbind(point1,point2)
+  closestRoad[[i]] <- seg
   # We now have the slope of the roadway
-  road_slo <- (atan2(point2[2]-point1[2],point2[1]-point1[1]) + 2*pi) %% 2*pi
-  # print(road_slo)
-
+  road_slo <- (atan2(seg[2,2]- seg[1,2], seg[2,1]- seg[1,1]) + 2*pi) %% 2*pi
+  
   if (!is.null(cornerStats[[i]])){  # Only modify if it is marked as a corner parcel
 
     # Compare first and last front point. ID which one has shortest perp dist to roadway.
     first <- parcelFront(i)[1,]
-    last <- parcelFront(i)[dim(parcelFront(i))[1],]
+    last <- parcelFront(i)[nrow(parcelFront(i)),]
     distFirst <- perpDist(first[1], first[2], closestRoad[[i]][1,1], closestRoad[[i]][1,2], closestRoad[[i]][2,1], closestRoad[[i]][2,2])
     distLast <- perpDist(last[1], last[2], closestRoad[[i]][1,1], closestRoad[[i]][1,2], closestRoad[[i]][2,1], closestRoad[[i]][2,2])
     slopes <- cornerStats[[i]]$slopes
@@ -569,7 +574,8 @@ for (i in 1:numPar){
       slopeDiffs[i] <- slopeDiff
       if (slopeDiff < 0){
         print("slopeDiff < 0")
-        delta <- max(min(slopeDiff * 0.5, -pi/6), -70/180*pi)  # Add a bit more than half, just as a buffer. Range must be between 45-70 degrees
+        # delta <- max(min(slopeDiff * 0.5, -pi/6), -70/180*pi)  # Add a bit more than half, just as a buffer. Range must be between 45-70 degrees
+        delta <- slopeDiff/abs(slopeDiff)*20/180*pi            # Delta is 20 degrees
         slopeCut <- atan2(sin(slopes[1] + delta), cos(slopes[1] + delta))
         for (j in 1:length(slopes)){
           if (atan2(sin(slopes[j]-slopeCut), cos(slopes[j]-slopeCut)) < 0) {  # This edge goes past the threshold
@@ -583,7 +589,8 @@ for (i in 1:numPar){
       }
       else{
         print("slopeDiff >= 0")
-        delta <- min(max(slopeDiff * 0.5, pi/6), 70/180*pi)
+        # delta <- min(max(slopeDiff * 0.5, pi/6), 70/180*pi)
+        delta <- slopeDiff/abs(slopeDiff)*20/180*pi           # Delta is 20 degrees
         slopeCut <- atan2(sin(slopes[1] + delta), cos(slopes[1] + delta))
         for (j in 1:length(slopes)){
           if (atan2(sin(slopes[j]-slopeCut), cos(slopes[j]-slopeCut)) > 0) {   # This edge goes past the threshold
@@ -603,7 +610,8 @@ for (i in 1:numPar){
       slopeDiffs[i] <- slopeDiff
       if (slopeDiff < 0){
         print("slopeDiff < 0")
-        delta <- max(min(slopeDiff * 0.5, -pi/6), -70/180*pi)  # Add a bit more than half, just as a buffer
+        # delta <- max(min(slopeDiff * 0.5, -pi/6), -70/180*pi)  # Add a bit more than half, just as a buffer
+        delta <- slopeDiff/abs(slopeDiff)*20/180*pi            # Delta is 20 degrees
         slopeCut <- atan2(sin(slopes[length(slopes)] + delta), cos(slopes[length(slopes)] + delta))
         for (j in length(slopes):1){
           if (atan2(sin(slopes[j]-slopeCut), cos(slopes[j]-slopeCut)) < 0){
@@ -617,7 +625,8 @@ for (i in 1:numPar){
       }
       else{
         print("slopeDiff >= 0")
-        delta <- min(max(slopeDiff * 0.5, pi/6), 70/180*pi)
+        # delta <- min(max(slopeDiff * 0.5, pi/6), 70/180*pi)
+        delta <- slopeDiff/abs(slopeDiff)*20/180*pi            # Delta is 20 degrees
         slopeCut <- atan2(sin(slopes[length(slopes)] + delta), cos(slopes[length(slopes)] + delta))
         for (j in length(slopes):1){
           if (atan2(sin(slopes[j]-slopeCut), cos(slopes[j]-slopeCut)) > 0){
@@ -649,9 +658,9 @@ flagCorner <- function(index){
   return(prop)
 }
 
-propFront <- vector("double", numPar)
+propFront <- vector("double", length(parcel))
 
-for(i in 1:numPar){
+for(i in 1:length(parcel)){
   print(i)
   if (!misfits[i]){
     propFront[i] <- flagCorner(i)
@@ -660,33 +669,33 @@ for(i in 1:numPar){
 
 ## Check out the distribution of proportions. Figure out a cutoff value for corner parcels
 ## that may not have front points extracted properly. Higher values = more concerning
-# tibble(val = propFront) %>%
-#   filter(val != 0) %>%    # Most values are 0%. Filter those out to look at relevant values
-#   ggplot(., aes(x = val)) +
-#   geom_histogram(aes(y = ..count../sum(..count..)), binwidth = 0.02) # +
-#   scale_x_continuous(breaks = seq(0, 0.5, 0.02)
-#     # , limits = c(90, 0)
-#   )
+tibble(val = propFront) %>%
+  filter(val != 0) %>%    # Most values are 0%. Filter those out to look at relevant values
+  ggplot(., aes(x = val)) +
+  geom_histogram(aes(y = ..count../sum(..count..)), binwidth = 0.02) # +
+  scale_x_continuous(breaks = seq(0, 0.5, 0.02)
+    # , limits = c(90, 0)
+  )
 #
-# tibble(val = propFront) %>%
-#   filter(val != 0) %>%    # Most values are 0%. Filter those out to look at relevant values
-#   ggplot(., aes(x = val)) +
-#   geom_histogram(aes(y = cumsum(..count..)/sum(..count..)), binwidth = 0.02) +
-#   scale_x_reverse(breaks = seq(0, 0.5, 0.02)
-#                      # , limits = c(90, 0)
-#   )
+tibble(val = propFront) %>%
+  filter(val != 0) %>%    # Most values are 0%. Filter those out to look at relevant values
+  ggplot(., aes(x = val)) +
+  geom_histogram(aes(y = cumsum(..count..)/sum(..count..)), binwidth = 0.02) +
+  scale_x_reverse(breaks = seq(0, 0.5, 0.02)
+                     # , limits = c(90, 0)
+  )
 #
 # sum(propFront > 0.1)
 # sum(propFront > 0.25)
 
 # Update misfits. Any parcels with proportion > 10% will be flagged for manual review
-for (i in 1:numPar){
+for (i in 1:length(parcel)){
   if(propFront[i] > 0.25){misfits[i] <- TRUE}
 }
 
 sum(misfits)
 ################################################################
-save.image("C.RData")
+save.image("C2.RData")
 ################################################################
 
 # # Take a look at the roads
@@ -698,7 +707,7 @@ save.image("C.RData")
 # }
 #
 # # Check if the modified parcel fronts are good without edits
-# for (i in 1:numPar){
+# for (i in 1:length(parcel)){
 #   if (isCorner[i]){
 #     print(i)
 #     eqscplot(parcel[[i]],type='l', tol=0.9)
@@ -713,8 +722,8 @@ save.image("C.RData")
 # }
 #
 # # Manual check whether the modified parcel fronts are good, and adjust them manually
-# modIndexFront <- vector("list", numPar)
-# for (i in 1:numPar){
+# modIndexFront <- vector("list", length(parcel))
+# for (i in 1:length(parcel)){
 #   if (isCorner[i]){
 #
 #     # Plot parcel and points
@@ -751,39 +760,63 @@ save.image("C.RData")
 
 
 # Read in building footprints
-file_bldg <- "epabldgsSFH_byAPN_PF_NAD83.geojson"
-bldgs <- read_sf(file_bldg) %>% select(APN, geometry)
-bldgs <- bldgs %>% st_set_crs(102643)%>% arrange(APN)
-
-# Function to grab largest building on each parcel
-largestBldg <- function(bldg){
-  bldg <- st_sf(bldg)
-  bldg %>%
-    st_cast("POLYGON") %>%
-    mutate(order = (order(st_area(.), decreasing = TRUE))) %>%
-    filter(order == 1) %>%
-    select(geometry)
-}
-
-# 4 mins to complete
-bldg <- NULL
-system.time({
-  for (i in 1:nrow(bldgs)){
-    print(i)
-    bldgi <- bldgs[i,]
-    result <- suppressWarnings(largestBldg(bldgi))
-    bldg <- rbind(bldg, result)
-  }
-})
-bldg <- bldgs %>% st_set_geometry(NULL) %>% bind_cols(bldg)
-# Add in APNs with no buildings. Geometry is an empty list
-bldg_all <- bldg %>% right_join(tibble(parcels$properties.APN), by = c("APN" = "parcels$properties.APN")) %>% st_sf()
-sum(misfits)
-for (i in 1:numPar){
-  if (is.na(st_dimension(bldg_all[i,]))){   # If there is no building, add to misfits
+bldgs <- read_sf(dsn = "epabldg", layer = "epabldgs_byAPN_redo") %>% st_transform(., crs = 102643) %>% arrange(APN)
+# Clean up buildings. For each parcel, clip the buildings to parcel (and if there are multiple buildings, take largest building)
+bldg_all <- NULL
+for (i in 1:nrow(parcels)){
+  print(i)
+  index <- match(parcels$APN[i], bldgs$APN)
+  # No building available, add an empty polygon
+  if (is.na(index)){
+    # print(i)
+    sf <- st_sf(APN = apn, geometry = st_sfc(st_polygon(list()), crs = 102643))
     misfits[i] <- TRUE
   }
+  else{
+    # Clip the buildings to boundary of each parcel
+    geom <- st_union(bldgs$geometry[index]) %>% st_intersection(parcels$geometry[i]) %>% st_cast("POLYGON")
+    if (length(geom) == 1){sf <- st_sf(APN = parcels$APN[i], geometry = geom)}
+    else{
+      # Sort buildings by area
+      areas <- st_area(geom)
+      geom <- geom[order(areas, decreasing = TRUE)]
+      # Keep the largest building
+      geom <- geom[1]
+      sf <- st_sf(APN = parcels$APN[i], geometry = geom)
+    }
+  }
+  bldg_all <- rbind(bldg_all, sf)
 }
+
+# # Function to grab largest building on each parcel
+# largestBldg <- function(bldg){
+#   bldg <- st_sf(bldg)
+#   bldg %>%
+#     st_cast("POLYGON") %>%
+#     mutate(order = (order(st_area(.), decreasing = TRUE))) %>%
+#     filter(order == 1) %>%
+#     select(geometry)
+# }
+
+# 4 mins to complete
+# bldg <- NULL
+# system.time({
+#   for (i in 1:nrow(bldgs)){
+#     print(i)
+#     bldgi <- bldgs[i,]
+#     result <- suppressWarnings(largestBldg(bldgi))
+#     bldg <- rbind(bldg, result)
+#   }
+# })
+# bldg <- bldgs %>% st_set_geometry(NULL) %>% bind_cols(bldg)
+# # Add in APNs with no buildings. Geometry is an empty list
+# bldg_all <- bldg %>% right_join(tibble(parcels$properties.APN), by = c("APN" = "parcels$properties.APN")) %>% st_sf()
+# sum(misfits)
+# for (i in 1:length(parcel)){
+#   if (is.na(st_dimension(bldg_all[i,]))){   # If there is no building, add to misfits
+#     misfits[i] <- TRUE
+#   }
+# }
 sum(misfits)
 
 checkCorner <- function(i){
@@ -836,7 +869,7 @@ checkCorner <- function(i){
 # Edge 1 = point1 to point2, edge 2 = point2 to point3, etc. Length of vector is length(parcel) - 1.
 idEdges <- function(index){
   par <- modParcel[[index]]
-  edges <- par[-dim(par)[1],3]
+  edges <- par[-nrow(par),3]
   # print(edges)
   # sides[(sides[])] <- "Front"
   # Find average of front
@@ -850,7 +883,7 @@ idEdges <- function(index){
   }
   maxDist <- 0
   maxInd <- NULL
-  for (i in 1:(dim(par)[1]-1)){
+  for (i in 1:(nrow(par)-1)){
     # Find furthest edge (using midpoint)
     if (par[i,3] == 0){       # Test only if not a front edge
       edge <- (par[i,] + par[i + 1, ]) / 2
@@ -868,7 +901,7 @@ idEdges <- function(index){
       # Case 3: distance is shorter. Keep moving.
     }
     ############### Identify front edge. Only front edge if the next point is also a front point
-    if (edges[i] == 1 && edges[i+1] == 1){
+    if (par[i,3] == 1 && par[i+1,3] == 1){
       edges[i] <- "Front"
     }
   }
@@ -881,16 +914,17 @@ idEdges <- function(index){
 }
 
 # Run idEdges on all parcels
-parcelEdges <- vector("list", numPar)
-for (i in 1:numPar){
+parcelEdges <- vector("list", length(parcel))
+for (i in 1:length(parcel)){
+  print(i)
   if (misfits[i]){next}
   # print(i)
   parcelEdges[[i]] <- idEdges(i)
 }
 
 # # Index buildings by APN ascending. NULL for APNs with no buildings
-# bldg <- data.frame(dim = c(numPar,2))
-# for (i in 1:numPar){
+# bldg <- data.frame(dim = c(length(parcel),2))
+# for (i in 1:length(parcel)){
 #   apn <- parcels$properties.APN[[i]]
 #   bldg[i,] <- bldgs[match(apn, bldgs$APN), c("APN", "geometry")]
 #   # if (!is.null(bldg[[i]])){      # If not, there is a building
@@ -908,9 +942,7 @@ for (i in 1:numPar){
 # Input: parcel, building_data, parcelFront
 # Use first and last front edge points to draw a line
 # Find point or edge on building that is closest (perpendicular distance)
-# Find line equation for front edge of building, XXXX then find intersection points on parcel
-# Output: point and vector for front cut XXX new parcel coordinates, array (n by 2)
-################### Need to incorporate merge_rings to cut out bldg footprint
+# Output: st_polygon buffered to cover front yard
 removeFront <- function(par, bldg, front){
   p_i <- front[1,]
   p_f <- front[dim(front)[1],]
@@ -923,24 +955,24 @@ removeFront <- function(par, bldg, front){
       minDist <- dist
     }
   }
-  # print(minIndex)
-  # print(minDist)
-  # Find parallel line
-  # slope <- atan2((p_f-p_i)[2],(p_f-p_i)[1])
-  pt <- bldg[minIndex,]
-  r_slope <- p_f-p_i
-  return (c(pt, r_slope, minDist))
+  front_seg <- st_sfc(st_linestring(rbind(p_i + 1000 * (p_f - p_i), p_i - 1000 * (p_f - p_i))), crs = 102643)
+  front_yard <- st_buffer(front_seg,minDist,endCapStyle = "SQUARE")
+  return(list(front_yard, minDist))
 }
 
-
 # Get histogram of distances between front of building and parcel edge
-frontDist <- vector("double", numPar)
-for (i in 1:numPar){
+frontDist <- vector("double", length(parcel))
+for (i in 1:length(parcel)){
+  print(i)
+  if (st_is_empty(bldg_all[i,])){
+    misfits[i] <- TRUE
+    next
+  }
   if (!misfits[i]){
     par <- parcel[[i]][,1:2]
     bldg <- st_coordinates(bldg_all[i,])[,1:2]
     front <- parcelFront(i, "Mod")
-    frontDist[i] <- removeFront(par, bldg, front)[5]
+    frontDist[i] <- removeFront(par, bldg, front)[[2]]
   }
 }
 
@@ -952,39 +984,25 @@ for (i in 1:numPar){
 # # Roughly 16% of parcels (600) have a front dist < 18 ft
 
 ###############################################
-save.image("D.RData")
+save.image("D2.RData")
 ###############################################
 
 
 # Helper Function: buffer for one edge
 # Input: parcel
 # Param: edge_index, buffer distance
-# Draw two points [buffer dist] perpendicular from edge midpoint, choose the point that is inside polygon
-# Draws parallel line that [buffer dist] away from the edge
-# Returns a line for the edge (u + param * slope vector r) as a vector length 4 (ux, uy, rx, ry)
+# Returns a buffer around the edge with distance dist
+# Returns as a st_polygon
 buffer <- function(par, ind, dist){
   edge <- par[ind:(ind+1),]      # index and next point
-  # print(edge)
-  edge_mp <- colMeans(edge)      # Edge midpoint
-  # print(edge_mp)
-  edge_slope <- atan2(par[ind+1,2]-par[ind,2], par[ind+1,1]-par[ind,1])
-  # print(edge_slope)
-  offset <- dist * c(cos(edge_slope + pi/2), sin(edge_slope + pi/2))
-  # print(offset)
-  opt1 <- edge_mp + offset
-  # print(opt1)
-  opt2 <- edge_mp - offset
-  # print(opt2)
-  if (point.in.polygon(opt1[1],opt1[2],par[,1],par[,2]) == 1){ # If opt1 is inside polygon
-    vec <- c(cos(edge_slope), sin(edge_slope))
-    return (c(opt1, vec))
-  } else if (point.in.polygon(opt2[1],opt2[2],par[,1],par[,2]) == 1){ # If opt2 is inside polygon
-    vec <- c(cos(edge_slope), sin(edge_slope))
-    return (c(opt2, vec))
-  } else{
-    print(paste("Buffer does not work for this polygon, index = ", ind))
-  }
+  # Convert coordinates into st_linestring
+  line <- st_sfc(st_linestring(edge), crs = 102643)
+  
+  # Buffer line seg by dist
+  buffered <- st_buffer(line, dist, nQuadSegs = 2, endCapStyle = "SQUARE") %>% st_make_valid()
+  return(buffered)
 }
+
 
 # Side and rear buffers
 # Input: parcel, edgeID (front, side, rear), building footprint, front points
@@ -995,144 +1013,87 @@ buffer <- function(par, ind, dist){
 # Check whether buffer overlaps with building. If it does, adjust so that there is no intersection in result
 # Output: new parcel coordinates, array (n by 2)
 allBuffers <- function(par, edges, bldg, front, side_dist, rear_dist, bldg_dist = 0){
-  buffers <- array(dim = c(0, 4))
-  skipFront <- FALSE               # Keep track of whether front cut was already added. If so, skip other front edges
-  # Find the lines for all the buffers
+  # Create sf objects for par and bldg
+  st_par <- st_sfc(st_polygon(list(par)), crs = 102643)
+  st_par <- st_snap(st_par, st_par, tolerance = 1e-1) %>% st_set_precision(1e9)
+  
+  # Bldg already in st_polygon form
+  st_bldg <- bldg %>% st_set_precision(1e9)
+  st_bldg <- st_snap(st_bldg, st_bldg, tolerance = 1e-1) %>% st_set_precision(1e9)
+  bldg <- st_coordinates(st_set_precision(st_bldg,1e9))[,1:2]
+  
+  # Remove building footprint from parcel
+  bldg_dist <- 0
+  result <- st_difference(st_buffer(st_par,0) %>% st_set_precision(1e9), st_buffer(st_bldg, bldg_dist,nQuadSegs = 2, endCapStyle = "SQUARE", joinStyle = "MITRE", mitreLimit = 5) %>% st_set_precision(1e9)) %>% st_buffer(-1e-9, joinStyle = "MITRE", mitreLimit = 5) %>% st_make_valid() %>% st_set_precision(1e9)
+  # result <- st_intersection(result, result)
+  
+  # Remove front yard
+  front_yard <- removeFront(par, bldg, front)[[1]] %>% st_set_precision(1e9)
+  result <- st_difference(st_buffer(result, 0) %>% st_set_precision(1e9), front_yard) %>% st_buffer(-1e-9, joinStyle = "MITRE", mitreLimit = 5) %>% st_set_precision(1e9) %>% st_make_valid() %>% st_set_precision(1e9)
+  result <- st_snap(result, result, tolerance = 1e-3) %>% st_set_precision(1e9)
   for (i in 1:length(edges)){
-    if (edges[i] == "Front"){
-      if (skipFront){
-        next
-      }
-      else{
-        buffers <- rbind(buffers, removeFront(par, bldg, front)[1:4])
-        skipFront <- TRUE
-      }
-    }
+    # i <- 4
+    # print(i)
+    if (edges[i] == "Front"){next}
     else if (edges[i] == "Side"){
-      buffers <- rbind(buffers, buffer(par, i, side_dist))
+      buff <- buffer(par, i, side_dist) %>% st_set_precision(1e9)
+      # result <- st_intersection(result, result)
+      result <- st_difference(st_buffer(result, 0) %>% st_set_precision(1e9), buff) %>% st_buffer(-1e-9, joinStyle = "MITRE", mitreLimit = 5) %>% st_set_precision(1e9) %>% st_make_valid() %>% st_set_precision(1e9)
     }
     else if (edges[i] == "Rear"){
-      buffers <- rbind(buffers, buffer(par, i, rear_dist))
+      buff <- buffer(par, i, rear_dist) %>% st_set_precision(1e9)
+      # result <- st_intersection(result, result)
+      result <- st_difference(st_buffer(result, 0) %>% st_set_precision(1e9), buff) %>% st_buffer(-1e-9, joinStyle = "MITRE", mitreLimit = 5) %>% st_set_precision(1e9) %>% st_make_valid() %>% st_set_precision(1e9)
     }
   }
-  buffers <- rbind(buffers, buffers[1,])      # Wrap around for easier looping later
-  # print(buffers)
-  newPar <- array(dim = c(nrow(buffers), 2))
-  for (i in 1:(nrow(buffers)-1)){
-    # print(paste("Buffer", i))
-    newPar[i,] <- intersectLines(buffers[i,],buffers[i+1,])
-  }
-  newPar[nrow(buffers),] <- newPar[1,]
-  # print(newPar)
-  # Check if new parcel has any intersections due to buffers overtaking edge(s)
-  # Use st_is_valid() to check
-  sf_newPar <- st_as_sf(SpatialPolygons(list(Polygons(list(Polygon(newPar)),1))))
-  # print("test2")
-  # Remove building parcel from new parcel
-  sf_bldg <- st_as_sf(SpatialPolygons(list(Polygons(list(Polygon(bldg)),1))))
-  sf_bldg <- st_buffer(sf_bldg, bldg_dist)
-  # print("test3")
-
-  # If there are intersections, this will split into multiple polygons. If not, nothing changes
-  split <- st_cast(st_make_valid(sf_newPar), "POLYGON")
-  split <- st_difference(split, sf_bldg)
-  split <- st_cast(split, "POLYGON")
-  # return(split)
-  if (nrow(split) == 0){
-    return ("No suitable polygons")
-  }
-
-
-  # Get the order of polygons by largest to smallest
-  # ord <- order(st_area(split), decreasing = TRUE)
-  split <- cbind(valid = vector("logical", length = nrow(split)), split)
-
-
-  for (i in 1:nrow(split)){
-    # inverted <- FALSE     # Track
-    # poly <- split[ord[i],]
-
-    # If polygon is not inverted, mark as valid
-    # Check shortest distance between polygon centroid and each edge.
-    cent <- st_coordinates(st_centroid(split[i,]))
-    split$valid[i] <- TRUE
-    for (j in 1:length(edges)){
-      if (edges[j] == "Front") {next} # Skip front facing, since we don't know the distance
-      else if (edges[j] == "Side") {dist <- side_dist}
-      else {dist <- rear_dist}
-
-      # distPtLineSeg <- function(x, y, x1, y1, x2, y2){
-      # If the distance > respective buffer, not inverted. Skip to next polygon
-      if (dist > distPtLineSeg(cent[1], cent[2], par[j,1], par[j,2], par[j+1,1], par[j+1,2])){
-        split$valid[i] <- FALSE
-        break
-      }
-    }
-    # # If after checking all the sides, not marked as inverted, add this polygon
-    # if (!inverted){
-    #   # polys <- rbind(polys, poly)
-    #   return(poly)
-    # }
-  }
-  if (sum(split$valid) == 0){
-    # print(split)
-    return ("No suitable polygons")
-  }
-  else{
-    # print(split)
-    return(split)
-  }
-  #
-  # if (length(polys) > 0){
-  #
-  # }
-  # else{
-    # return ("No suitable polygons")
-  # }
+  
+  return (result)
+  
 }
 
 
 # Find the available area after buffers. No building set back. Side = 5 ft, Rear = 10 ft
 result_Bldg0 <- NULL
 # need to fix 905, 3458, 3539, 3869
-misfits[905] <- TRUE
-misfits[2678] <- TRUE
-misfits[3458] <- TRUE
-misfits[3480] <- TRUE
-misfits[3539] <- TRUE
-misfits[3612] <- TRUE
-misfits[3869] <- TRUE
+# misfits[905] <- TRUE
+# misfits[2678] <- TRUE
+# misfits[3458] <- TRUE
+# misfits[3480] <- TRUE
+# misfits[3539] <- TRUE
+# misfits[3612] <- TRUE
+# misfits[3869] <- TRUE
 
-for (i in 1:numPar){
+# 3339
+for (i in 1:length(parcel)){
   if (!misfits[i]){
+    # i <- 1
     print(i)
     par <- parcel[[i]][,1:2]
     edges <- parcelEdges[[i]]
-    bldg <- st_coordinates(bldg_all[i,])[,1:2]
+    bldg <- st_geometry(bldg_all[i,]) %>% st_buffer(0)
+    # bldg <- st_coordinates(bldg_all[i,])[,1:2]
     front <- parcelFront(i, "Mod")
     side_dist <- 5
     rear_dist <- 10
     geom <- allBuffers(par, edges, bldg, front, side_dist, rear_dist, bldg_dist = 0)
-    if (is.character(geom) || nrow(geom) == 0){
-      sf <- st_sf(APN = parcels$properties.APN[[i]], valid = FALSE, geometry = st_sfc(st_polygon()))
-    }
-    else{
-      sf <- st_sf(data.frame(tibble(APN = parcels$properties.APN[[i]]),geom))
-    }
-
+    # if (is.character(geom) || nrow(geom) == 0){
+    #   sf <- st_sf(APN = parcels$properties.APN[[i]], valid = FALSE, geometry = st_sfc(st_polygon()))
+    # }
+    if (length(geom) == 0){next}
+    sf <- st_sf(APN = parcels$APN[i], geom)
     result_Bldg0 <- rbind(result_Bldg0, sf)
   }
 }
 
-for (i in 1:numPar){
-  if (!misfits[i]){
-    eqscplot(st_coordinates(result_Bldg0[i,]), type='l')
-    invisible(readline(prompt="Press [enter] to continue"))
-  }
-}
+# for (i in 1:length(parcel)){
+#   if (!misfits[i]){
+#     eqscplot(st_coordinates(result_Bldg0[i,]), type='l')
+#     invisible(readline(prompt="Press [enter] to continue"))
+#   }
+# }
 
 ############################################
-save.image("E.RData")
+save.image("E2.RData")
 ############################################
 
 prepPoly <- function(poly){
@@ -1151,68 +1112,58 @@ prepPoly <- function(poly){
 #   result_Bldg0$misfit[i] <- misfits[which(result_Bldg0$APN[i] == misfits, TRUE)[1],1]
 # }
 
-result_Bldg0$slopes[[1]] <- list()
-result_Bldg0$valid <- TRUE
+result_Bldg0$valid <- st_is_valid(result_Bldg0)
 result_Bldg0$xmin <- 0
 result_Bldg0$ymin <- 0
 
-# Get the angle/slopes present in each bldg parcel
-for (i in 1:nrow(result_Bldg0)){
-  # Skip this one if the area is smaller than 160 SF (minimum area for ADU) or if there is no geometry
-  if (st_area(result_Bldg0[i,]) < 160 || st_is_empty(result_Bldg0[i,])){
-    result_Bldg0$valid[i] <- FALSE
+# Get XMin and YMin and shift coordinates (avoids numerical errors)
+buildable <- result_Bldg0
+buildable$xmin <- 0
+buildable$ymin <- 0
+for (i in 1:nrow(buildable)){
+  if (st_geometry_type(result_Bldg0[i,]) == "GEOMETRYCOLLECTION"){
+    result_Bldg0$valid == FALSE
     next
   }
   print(i)
-  # Extract coordinates
-  coord <- as_tibble(st_coordinates(result_Bldg0[i,]))
-  # Separate out if there are holes
-  poly1 <- (coord %>% filter(L1 == 1) %>% select(X, Y)) %>% unlist() %>% unname() %>% matrix(ncol = 2)
-  poly2 <- NULL
-  if (mean(coord$L1) > 1){
-    poly2 <- (coord %>% filter(L1 == 2) %>% select(X, Y)) %>% unlist() %>% unname() %>% matrix(ncol = 2)
-  }
-  # Get the slopes for each edge
-  slopes <- vector(length = nrow(poly1)-1)
-  for (j in 1:(nrow(poly1)-1)){
-    slopes[j] <- atan2((poly1[j+1,2]-poly1[j,2]),(poly1[j+1,1]-poly1[j,1]))
-  }
-  if (!is.null(poly2)){
-    slopes2 <- vector(length = nrow(poly1)-1)
-    for (j in 1:(nrow(poly2)-1)){
-      slopes2[j] <- atan2((poly2[j+1,2]-poly2[j,2]),(poly2[j+1,1]-poly2[j,1]))
-    }
-    # Put slopes in one list
-    slopes <- c(slopes, slopes2)
-  }
-  
-  # Remove duplicates
-  slopes <- slopes %>% sort() %>% unique() %>% list()
-  
-  
-  # Add to result_Bldg0
-  result_Bldg0$slopes[[i]] <- slopes
-  
-  # Store Xmin and Ymin and adjust geometry to relative coordinates
-  result_Bldg0$xmin[i] <- st_bbox(result_Bldg0[i,])[1]
-  result_Bldg0$ymin[i] <- st_bbox(result_Bldg0[i,])[2]
-  st_geometry(result_Bldg0[i,]) <- st_geometry(result_Bldg0[i,]) - c(result_Bldg0$xmin[i], result_Bldg0$ymin[i])
-  
+  coord <- st_coordinates(buildable[i,])[,1:2]
+  buildable$xmin[i] <- min(coord[,1])
+  buildable$ymin[i] <- min(coord[,2])
+  st_geometry(buildable[i,]) <- st_geometry(buildable[i,]) - c(buildable$xmin[i], buildable$ymin[i])
 }
 
 ############################################
-save.image("F.RData")
+save.image("F2.RData")
 ############################################
 
 # Apply minimum 8 x 20 area to get rid of unviable spaces
 # Merge the possible rectangles together
-bldg0_buildable <- NULL
+buildable_adu <- NULL
 
-# 3516 self intersection error
-# 3551 self intersection error
-# 3692 self intersection error
-# 4020 self intersection error
-# 4562, 4896, 5052, 5295, 5726, 5733
+for (i in 1:11){#nrow(buildable)){
+  poly <- st_geometry(buildable[i,]) %>% st_cast("POLYGON")
+  result <- st_sfc(st_polygon(), crs = 102643)
+  print(i)
+  for (j in 1:length(poly)){
+    j <- 1
+    print(j)
+    # Skip this one if the area is smaller than 160 SF (minimum area for ADU) or if there is no geometry
+    if (as.numeric(st_area(poly[j])) < 160 || st_is_empty(poly[j])){
+      next
+    }
+    rect <- largestRect(poly[j], print = TRUE)
+    if (is.character(rect)){next}
+    result <- st_union(result, largestRect(poly[j], print = TRUE))
+  }
+  if (st_is_empty(result)){
+    sf <- st_sf(APN = buildable$APN[i], message = geom, geometry = result)
+  }
+  else{
+    sf <- st_sf(APN = buildable$APN[i], message = "Success", geometry = result)
+  }
+  buildable_adu <- rbind(buildable_adu, sf)
+}
+
 
 
 for (i in 5734:nrow(result_Bldg0)){
