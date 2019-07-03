@@ -15,7 +15,9 @@ library(sf)
 library(lwgeom)
 library(smoothr)
 library(mapview)
+library(beepr)
 
+options(error = function(){beep(3)})
 # Transform to CRS: 102643 (NAD 1983 State Plane California, units = us-ft)
 parcels <- read_sf(dsn = "epaparcels", layer = "epaparcelsSFH_redo") %>% st_transform(., crs = 102643)
 
@@ -1079,8 +1081,16 @@ for (i in 1:length(parcel)){
     # if (is.character(geom) || nrow(geom) == 0){
     #   sf <- st_sf(APN = parcels$properties.APN[[i]], valid = FALSE, geometry = st_sfc(st_polygon()))
     # }
-    if (length(geom) == 0){next}
-    sf <- st_sf(APN = parcels$APN[i], geom)
+    if (length(geom) == 0){
+      sf <- st_sf(APN = parcels$APN[i], geometry = st_sfc(st_polygon(), crs = 102643))
+    }
+    else{
+      sf <- st_sf(APN = parcels$APN[i], geometry = geom)
+    }
+    result_Bldg0 <- rbind(result_Bldg0, sf)
+  }
+  else{
+    sf <- st_sf(APN = parcels$APN[i], geometry = st_sfc(st_polygon(), crs = 102643))
     result_Bldg0 <- rbind(result_Bldg0, sf)
   }
 }
@@ -1122,7 +1132,11 @@ buildable$xmin <- 0
 buildable$ymin <- 0
 for (i in 1:nrow(buildable)){
   if (st_geometry_type(result_Bldg0[i,]) == "GEOMETRYCOLLECTION"){
-    result_Bldg0$valid == FALSE
+    buildable$valid[i] <- FALSE
+    next
+  }
+  if (st_is_empty(result_Bldg0[i,])){
+    buildable$valid[i] <- FALSE
     next
   }
   print(i)
@@ -1131,7 +1145,7 @@ for (i in 1:nrow(buildable)){
   buildable$ymin[i] <- min(coord[,2])
   st_geometry(buildable[i,]) <- st_geometry(buildable[i,]) - c(buildable$xmin[i], buildable$ymin[i])
 }
-
+beep(3)
 ############################################
 save.image("F2.RData")
 ############################################
@@ -1140,23 +1154,47 @@ save.image("F2.RData")
 # Merge the possible rectangles together
 buildable_adu <- NULL
 
-for (i in 1:11){#nrow(buildable)){
+# 604
+for (i in 1:nrow(buildable)){
+  if (i == 627 || i == 790 || i == 1104 || i == 1120 || i == 2350 || i == 2463 || i == 2496 || i == 2524 || i == 2577 || i == 2696){
+    sf <- st_sf(APN = buildable$APN[i], message = "Invalid geometry", geometry = st_sfc(st_polygon(), crs = 102643))
+    buildable_adu <- rbind(buildable_adu, sf)
+    next
+  }
+  if (buildable$valid[i] == FALSE){
+    sf <- st_sf(APN = buildable$APN[i], message = "Invalid geometry", geometry = st_sfc(st_polygon(), crs = 102643))
+    buildable_adu <- rbind(buildable_adu, sf)
+    next
+  }
   poly <- st_geometry(buildable[i,]) %>% st_cast("POLYGON")
   result <- st_sfc(st_polygon(), crs = 102643)
+  msg <- ""
   print(i)
   for (j in 1:length(poly)){
-    j <- 1
     print(j)
     # Skip this one if the area is smaller than 160 SF (minimum area for ADU) or if there is no geometry
-    if (as.numeric(st_area(poly[j])) < 160 || st_is_empty(poly[j])){
+    if (as.numeric(st_area(poly[j])) < 160){
+      msg <- paste(msg, "Area less than 160")
+      next
+    }
+    if (st_is_empty(poly[j])){
+      msg <- paste(msg, "Empty geometry")
+      next
+    }
+    if (!st_is_valid(poly[j])){
+      msg <- paste(msg, "Invalid geometry")
       next
     }
     rect <- largestRect(poly[j], print = TRUE)
-    if (is.character(rect)){next}
-    result <- st_union(result, largestRect(poly[j], print = TRUE))
+    if (is.character(rect)){
+      msg <- paste(msg, rect)
+    }
+    else{
+      result <- st_union(result, rect)
+    }
   }
-  if (st_is_empty(result)){
-    sf <- st_sf(APN = buildable$APN[i], message = geom, geometry = result)
+  if (length(result) == 0 || st_is_empty(result)){
+    sf <- st_sf(APN = buildable$APN[i], message = msg, geometry = st_sfc(st_polygon(), crs = 102643))
   }
   else{
     sf <- st_sf(APN = buildable$APN[i], message = "Success", geometry = result)
@@ -1164,21 +1202,6 @@ for (i in 1:11){#nrow(buildable)){
   buildable_adu <- rbind(buildable_adu, sf)
 }
 
-
-
-for (i in 5734:nrow(result_Bldg0)){
-  print(i)
-  geom <- largestRect(result_Bldg0[i,], print = TRUE)
-  # print(i)
-  if (is.character(geom)){
-    sf <- st_sf(APN = result_Bldg0$APN[i], message = geom, geometry = st_sfc(st_polygon()))
-  }
-  else{
-    sf <- st_sf(APN = result_Bldg0$APN[i], message = "Success", geometry = geom)
-  }
-  # print(i)
-  bldg0_buildable <- rbind(bldg0_buildable, sf)
-}
 
 ##### Work in Progress
 # test <- largestRect(result_Bldg0[3551,], print = TRUE)
@@ -1189,50 +1212,25 @@ for (i in 5734:nrow(result_Bldg0)){
 #   }
 # }
 
-##############################################
-save.image("G.RData")
-#############################################
-#########EXPLORE HERE#################################
 
-for (i in 1:nrow(result_Bldg0)){
-  print(i)
-  largestRect(result_Bldg0[i,], print = TRUE)
-}
-
-# To show the result for an index:
-# Choose a value for i
-i <- 1
-largestRect(result_Bldg0[i,], print = TRUE)
-
-test <- bldg0_buildable[7,]
-# Set CRS as 102643
-test <- test %>% st_set_crs(102643)
-test2 <- fill_holes(test, 1000)
-plot(test)
-plot(test2)
-
-result_Bldg0 <- result_Bldg0 %>% st_set_crs(102643)
-bldg0_buildable <- bldg0_buildable %>% st_set_crs(102643)
-
-result_Bldg0_offset <- result_Bldg0
-
+buildable_adu_no_offset <- buildable_adu
 # Return geometries to original coordinates, no offsets
-for(i in 1:nrow(result_Bldg0)){
-  offset <- c(result_Bldg0$xmin[i], result_Bldg0$ymin[i])
-  result_Bldg0$geometry[i] <- result_Bldg0$geometry[i] + offset
-  result_Bldg0$xmin[i] <- 0
-  result_Bldg0$ymin[i] <- 0
+for(i in 1:nrow(buildable_adu_no_offset)){
+  print(i)
+  offset <- c(buildable$xmin[i], buildable$ymin[i])
+  st_geometry(buildable_adu_no_offset[i,]) <- st_geometry(buildable_adu_no_offset[i,]) + offset
+  buildable_adu_no_offset[i,] <- fill_holes(buildable_adu_no_offset[i,], 1e5)
 }
 
+map <- mapview(parcels, col.regions = "white") + mapview(bldg_all, col.regions = "red") + mapview(buildable_adu_no_offset %>% filter(message == "Success"), col.regions = "green")
+mapshot(map, "attached_adu.html")
 
-rownames(test) <- c()
-saveAPN <- test$APN[1]
-for(i in 1:nrow(test)){
-  offset <- c(test$xmin[i], test$ymin[i])
-  test$geometry[i] <- test$geometry[i] + offset
-  test$xmin[i] <- 0
-  test$ymin[i] <- 0
-}
+##############################################
+save.image("G2.RData")
+#############################################
+
+
+
 
 
 # https://github.com/r-spatial/sf/issues/290
