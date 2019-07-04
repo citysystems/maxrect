@@ -1222,13 +1222,25 @@ for(i in 1:nrow(buildable_adu_no_offset)){
   buildable_adu_no_offset[i,] <- fill_holes(buildable_adu_no_offset[i,], 1e5)
 }
 
-map <- mapview(parcels, col.regions = "white") + mapview(bldg_all, col.regions = "red") + mapview(buildable_adu_no_offset %>% filter(message == "Success"), col.regions = "green")
-mapshot(map, "attached_adu.html")
-
 ##############################################
 save.image("G2.RData")
+load("G2.Rdata")
 #############################################
 
+# Derek's additional formatting on mapview
+
+projection <- "+proj=longlat +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +no_defs"
+parcels %<>% st_transform(projection)
+bldg_all %<>% st_transform(projection)
+buildable_adu_no_offset %<>% st_transform(projection)
+
+Parcels <- parcels
+ExistingBuilding <- bldg_all
+AttachedADU <- buildable_adu_no_offset %>% filter(message == "Success")
+
+map <- mapview(Parcels, alpha.regions = 0, legend = FALSE) + mapview(ExistingBuilding, col.regions = "grey", legend = FALSE) + mapview(AttachedADU, col.regions = "green", legend = TRUE)
+map
+mapshot(map, "attached_adu.html")
 
 
 
