@@ -1,7 +1,12 @@
+
+
+
+
 ### Only run this once to install maxrectangle
 # devtools::install_git('https://gitlab.com/b-rowlingson/maxrectangle')
+#*#*#*#* Not used anymore?
 
-library(maxrectangle)
+library(maxrectangle)   #*#*# Not used anymore? 
 library(geojsonsf)
 library(jsonlite)
 library(readr)
@@ -17,108 +22,89 @@ library(smoothr)
 library(mapview)
 library(beepr)
 
+
+# Note: if you are running long code and want the system to play a sound when there is an error, you can use this
 options(error = function(){beep(3)})
-# Transform to CRS: 102643 (NAD 1983 State Plane California, units = us-ft)
-parcels <- read_sf(dsn = "epaparcels", layer = "epaparcelsSFH_redo") %>% st_transform(., crs = 102643)
-
-# Way to view the shapefiles
-# mapview(parcels) + mapview(bldgs)
-
-# Order by APN
-parcels <- parcels %>% arrange(APN)
 
 
-### Note: In order for the find_lr function to work as we intend (pulling all possible buildable area), we need to change the largestRect.coffee in the R library "3.5/maxrectangle/js" folder
+# For the shapefiles, we are working in CRS: 102643 (NAD 1983 State Plane California, units = us-ft)
+# This projection is suited for San Francisco Bay Area and the units are in US survey feet
+# All sf and spatial objects should be using this projection during R analysis. Can be transformed to a more common projection like WGS 84 for export.
 
-# To save current environment
-# save.image(".RData")
 
-### parcels
-# file_parcel <- "epaparcels_clean_NAD83.geojson"
-# parcels <- fromJSON(txt=file_parcel, flatten = TRUE, simplifyDataFrame = TRUE)
-# parcels <- parcels$features
+### TERMINOLOGY USED IN THIS SCRIPT (Capitalization SENSITIVE)
+# SF: simple feature object
+# POINT: SF point object
+# LINE: SF line object
+# POLYGON: SF polygon object
+# MULTIXX: SF multipoint / multiline object
+# Points / Vertices: The POINTs that form the POLYGON for a parcel
+# Edges: The LINEs that form the POLYGON for a parcel. Note the difference from the term "Side."
+# Roadway: Any type of road (lane, avenue, court, street)
+# Address Roadway: The specific road segment that is adjacent to a parcel, which shares the parcel address name. More relevant for corner parcels which may be adjacent to multiple 
+#    streets. E.g. 234 McNair Street may be adjacent to McNair Street and McNair Court, but the address roadway is McNair Street. 
+# Block: A collection of adjacent parcels, which can be outlined by its surrounding streets.
+# Edge type: Descriptor of where a parcel edge is with respect to its address roadway
+#   - Front: The parcel edge(s) closest to the address roadway
+#   - Rear: The parcel edge furthest away from address roadway. In most cases, the rear edge should be near parallel to the front edge.
+#   - Side: Remaining edges, which are separated into:
+#       - Street: (Only relevant for corner parcels.) Edges adjacent to a street that are NOT front.
+#       - Interior: For corner parcels, side edges that are not street side. For other parcels, all side edges are interior.
 
-# Filter down to 3920 SFH parcels
+## Object: Single Family Home (SFH) parcels in EPA. 
+## Source: Shapefile was generated in QGIS. parcels arranged in ascending order by APN.
+## Format: SF POLYGON objects
+## Purpose: Used in geospatial analysis to identify parcel edges by front, rear, side (interior), side (corner/street), then for setbacks.
+parcels <- read_sf(dsn = "epaparcels", layer = "epaparcelsSFH_redo") %>% st_transform(., crs = 102643) %>% arrange(APN)
+
+## Object: List of APNs for 3920 SFH parcels.
+## Source: Assessor data, preprocessed in Excel
+## Format: Numeric vector
+## Purpose: Quality check on parcel source to make sure the two lists of APN are not mismatched.
 list_apn <- read_csv("apn.csv")
+# APNs are read in as numbers, but need to add leading "0" to match format in 'parcels'. Turned into string vector
 list_apn <- paste0( "0", list_apn$apn)
 parcels <- parcels %>% filter(APN %in% list_apn)
 
-### Join parcels to their address streets
+## Object: List of streets from SFH addresses
+## Source: Assessor data, preprocessed in Excel
+## Format: String vector
+## Purpose: Join parcels to their address street. This will be necessary for linking parcels to their respective roadway for identifying the front edge of parcels.
 street <- read_csv("apn_street.csv")
 street$apn <- paste0( "0", street$apn)
 parcels <- parcels %>% inner_join(street, by = c("APN" = "apn"))
 
-### roads
-# file_roads <- "epa_roads_adj_NAD83.geojson"
-# roads <- fromJSON(txt=file_roads, flatten = TRUE, simplifyDataFrame = TRUE)
-# 
+## Object: East Palo Alto Street network
+## Source: Filtered from San Mateo County Streets network.
+## Format: SF LINE objects
+## Purpose: Link each parcel to their respective roadway to identify front edge of parcels.
+# Note: Due to variations in name capitalization (e.g. McNair vs. Mcnair) or spelling errors, some manual edits were necessary for joining all parcels
 roads <- read_sf("epa_roads_adj_NAD83.geojson") %>% select(name = FULLNAME) %>% arrange(name)
-# Combining sf objects by attribute https://github.com/r-spatial/sf/issues/290
+# Reformat so all lines for one street name (e.g. "Maple Ln") are represented by one MULTILINE object. Distinguish between Ln, St, Ave, etc. with the same name
+# Technical help: Combining sf objects by attribute https://github.com/r-spatial/sf/issues/290
 roads_combined <- st_sf(name = roads$name %>% unique() %>% .[1:161], 
                         geometry = test %>% split(.$name) %>% lapply(st_union) %>% do.call(c, .) %>% st_cast())
 
-# # Initialize column for storing road segments
-# parcels[,"list_roads"] <- NA
-# for (i in 1:length(parcel)){
-#   parcels$list_roads[i] <- list(roads %>% filter(toupper(properties.FULLNAME) == toupper(parcels$address[[i]])))
-# }
-
-
-### coordinates of front
-# file_blocks <- "front_vertices_cleaned_NAD83.geojson"
+## Object: Parcel points adjacent to streets, hereby coined "block points"
+## Source: Result of geoprocessing done in QGIS. parcels dissolved by block, and vertices extracted from dissolved polygons.
+## Format: SF POINT objects
+## Purpose: These points are needed to determine which parcel edges are front facing, and to distinguish interior side from street side edges.
 blocks <- read_sf(dsn = "epablocks", layer = "front_vertices_redo") %>% st_transform(., crs = 102643)
 blockPts <- st_coordinates(blocks)[,1:2]
+# Arrange the block points by latitude and longitude. Needs to be ordered for binary search later.
 blockPts <- blockPts[order(blockPts[,1], blockPts[,2]),] %>% unique()
-
-# blocks <- fromJSON(txt=file_blocks, flatten = TRUE, simplifyDataFrame = TRUE, simplifyMatrix = TRUE)
-# blocks <- blocks$features$geometry.coordinates
-# blockPts <- array(data = 0, dim = c(length(blocks), 2))
-# for(i in 1:length(blocks)){
-#   if(is.null(blocks[[i]]) || typeof(blocks[[i]]) != "double"){next}
-#   blockPts[i,1] <- blocks[[i]][1]
-#   blockPts[i,2] <- blocks[[i]][2]
-# }
-# blockPts <- blockPts[blockPts[,1] != 0,]
-# blockPts <- blockPts[order( blockPts[,1], blockPts[,2]),]
-# blockPts <- unique(blockPts)
 
 ######## Rdata of all the raw data
 ##########################################
 save.image("A2.RData")
 ##########################################
 
-# ### parcels
-# file_parcel <- "epaparcels_clean.geojson"
-# parcels <- read_sf(file_parcel)
-# parcels <- parcels %>% select(APN, geomPar = geometry)
-# # # Filter down to 3920 SFH parcels
-# # file_apn <- "apn.csv"
-# # apn_list <- read_csv(file_apn)
-# # apn_list <- apn_list %>% transmute(apn = paste0("0", apn))
-# # parcels <- filter(parcels, APN %in% apn_list$apn)
-# ### Join parcels to their address streets
-# file_street <- "apn_street.csv"
-# street <- read_csv(file_street)
-# street$apn <- paste0( "0", street$apn)
-# parcels <- parcels %>% inner_join(street, by = c("APN" = "apn")) %>% arrange(APN)
-#
-# ### roads
-# file_roads <- "epa_roads_adj.geojson"
-# roads <- read_sf(file_roads)
-# roads <- roads %>% aggregate(list(roads$FULLNAME), function(x) x[1]) %>% select(street = FULLNAME, roads = geometry)
-# roads <- roads %>% full_join((parcels %>% st_set_geometry(NULL)), by = c("street" = "address")) %>% filter(!is.na(APN)) %>% arrange(APN)
-#
-# ### coordinates of front
-# file_blocks <- "front_vertices_cleaned.geojson"
-# blocks <- read_sf(file_blocks)
-# blocksPts <- blocks %>% select(geometry) %>% unique() %>% st_coordinates()
-# blocksPts <- as.array(test[,1:2])
-
-# Check if point is at front
-# Inputs one point (x, y coordinate 1 x 2 vector)
-# Outputs a boolean
-isFront <- function(point){
-  # Check if point matches blocks
+## Function: Checks if parcel vertex matches a block point. Flagged vertices are candidates for identifying front and street side edges. Uses a binary search on sorted list of coordinates.
+## Params:
+##   point: x and y coordinates given as vector of length 2
+## Returns: 
+##   TRUE if corresponds to a block point. FALSE if not.
+isBlock <- function(point){
   index <- findInterval(point[1] - 1, blockPts[,1])  # This index may be +/- 1 from the actual value
   if (index > 0) {index <- index - 1}                   # Move back one
   for (i in 1:3){                      # Make sure a minimum of three iterations done before stopping
@@ -131,15 +117,16 @@ isFront <- function(point){
   return(FALSE)
 }
 
-# Remove unnecessary points from parcel (if two adj line segments are collinear, remove middle point)
-# Inputs a polygon (n by 2 array)
-# Outputs a modified polygon (n by 2 array)
+## Function: Removes excessive collinear vertices from parcel
+## Params:
+##   Parcel coordinates, given as n by 2 numeric array
+## Returns:
+##   Modified parcel coordinates, n - m by 2 numeric array
 removeCollinear <- function(arr){
   slope <- vector(mode = "double", length = dim(arr)[1]-1)
   for (j in 1:length(slope)){
     slope[j] <- atan2(arr[j+1,2]-arr[j,2], arr[j+1,1]-arr[j,1])
   }
-  # print(slope)
   i <- 2
   while (i <= length(slope)){
     if (abs(atan2(sin(slope[i] - slope[i-1]), cos(slope[i] - slope[i-1]))/pi*180) < 5){
@@ -151,154 +138,180 @@ removeCollinear <- function(arr){
     i <- i + 1              # increment index
   }
   if (abs(atan2(sin(slope[1] - slope[length(slope)]), cos(slope[1] - slope[length(slope)]))/pi*180) < 5) { # Check first and last edge
-    # print(arr)
     arr <- arr[-1,]        # Remove first point
-    # print(arr)
     arr[dim(arr)[1],] <- arr[1,]      # Replace last point with new first point
   }
   return(arr)
 }
 
-# Create a variable that works directly with parcel coordinates (vector of lists)
-parcel <- vector("list", nrow(parcels))
+## Object: Coordinates of parcel vertices
+## Format: Vector of lists. Each list contains an array of coordinates.
+## Purpose: Easy access to parcel vertices, which will later be labeled as block points or not.
+parcelXY <- vector("list", nrow(parcels))
 for (i in 1:nrow(parcels)){
-  # print(i)
-  parcel[[i]] <- st_coordinates(parcels[i,])[,1:2] %>% unique()
-  parcel[[i]] <- rbind(parcel[[i]], parcel[[i]][1,])
+  parcelXY[[i]] <- st_coordinates(parcels[i,])[,1:2] %>% unique()
+  parcelXY[[i]] <- rbind(parcelXY[[i]], parcelXY[[i]][1,])
 }
 
 # Remove collinear points from parcels
-for (i in 1:length(parcel)){
-  # print(i)
-  arr <- parcel[[i]]
-  parcel[[i]] <- removeCollinear(arr)
+for (i in 1:length(parcelXY)){
+  arr <- parcelXY[[i]]
+  parcelXY[[i]] <- removeCollinear(arr)
 }
 
-# Find number of landlocked parcels (all points are touching another parcel)
-# First, pull all the coordinates for the first polygon for each parcel
-checkFront <- vector("logical", length(parcel))   # Keep track of whether a parcel touches the front
-numFront <- vector("double", length(parcel))      # Keep track of number of points that touch the front
-# indexFront <- vector("list", length(parcel))      # Keep track of index of points that touch the front
-for (i in 1:length(parcel)){
+
+# Now, we need to identify block points on each parcel. The information will be stored (1) directly as a marker in the parcel object and (2) keeping track of 
+# number of block points in "numBlock object."
+numBlock <- vector("double", length(parcelXY))
+for (i in 1:length(parcelXY)){
   print(i)
-  poly <- parcel[[i]]
+  poly <- parcelXY[[i]]
   # poly <- rbind(poly, poly[1,])
-  parcel[[i]] <- cbind(poly, vector(length = nrow(poly)))
+  parcelXY[[i]] <- cbind(poly, vector(length = nrow(poly)))
   for (j in 1:(nrow(poly)-1)){
-    if (isFront(poly[j,])){
-      checkFront[i] <- TRUE
-      parcel[[i]][j,3] <- TRUE
-      numFront[i] <- numFront[i] + 1
+    if (isBlock(poly[j,])){
+      parcelXY[[i]][j,3] <- TRUE
+      numBlock[i] <- numBlock[i] + 1
     }
   }
 }
 
-sum(checkFront)
-table(numFront)
+#~#~# Quality Check
+# These can be used to check if the identification of block points is working properly
+# sum(numBlock > 0)
+# table(numBlock)
 
-# Front indices may be out of order if the polygon starting point is in the middle of the front
-chunks <- vector("double", length(parcel))              # chunks of points marked as front
-false_chunks <- vector("double", length(parcel))        # chunks of points not marked as front (used to ID problems)
-# offsetFront <- vector("double", length(parcel))         # what number of points to move to the back
-# deleteFront <- vector("double", length(parcel))         # what index point to remove
-chunks2 <- vector("double", length(parcel))              # chunks of points marked as front
-false_chunks2 <- vector("double", length(parcel))        # chunks of points not marked as front (used to ID problems)
-chunks3 <- vector("double", length(parcel))              # chunks of points marked as front
-false_chunks3 <- vector("double", length(parcel))        # chunks of points not marked as front (used to ID problems)
-for (i in 1:length(parcel)){
-  print(i)
+
+
+
+## Function: Parcel vertices are reindexed to make sure that block points are not "wrapping around" and creating two "chunks" of block points.
+## Chunk = consecutive block points
+## False chunk = consecutive non-block points
+# Example:
+# Original parcel index  1 2 3 4 5
+# Block point?           Y N N Y Y  (Two chunks, one false chunk)
+# Reordered parcel index 4 5 1 2 3
+# Block point?           Y Y Y N N  (One chunk, one false chunk)
+# Each parcel is supposed to only have one "chunk" of block points. This reordering ensures that the data quality is good and is used to flag
+# any parcels that have more than one chunk after reordering for manual review.
+## Params:
+##   i: index of parcel in parcel object.
+## Returns:
+##   modParcel: parcel object with modified indexing
+##   flag: TRUE if more than one chunk and needs manual review. FALSE if no problems with modParcel
+reIndex <- function(i){
+  chunks <- 0
+  false_chunks <- 0
+  
   preVal <- FALSE
-  arr <- parcel[[i]][-nrow(parcel[[i]]),]
-  # print(parcel[[i]])
-  # print(arr)
+  arr <- parcelXY[[i]][-length(parcelXY[[i]]),]
   for (j in 1:nrow(arr)){
-    if (j == 1 && arr[j,3] == 1){chunks[i] <- chunks[i] + 1}
-    else if (j == 1 && arr[j,3] == 0){false_chunks[i] <- false_chunks[i] + 1}
-    else if (preVal == FALSE && arr[j,3] == 1){chunks[i] <- chunks[i] + 1}
-    else if (preVal && arr[j,3] == 0){false_chunks[i] <- false_chunks[i] + 1}
+    if (j == 1 && arr[j,3] == 1){chunks <- chunks + 1}
+    else if (j == 1 && arr[j,3] == 0){false_chunks <- false_chunks + 1}
+    else if (preVal == FALSE && arr[j,3] == 1){chunks <- chunks + 1}
+    else if (preVal == TRUE && arr[j,3] == 0){false_chunks <- false_chunks + 1}
     preVal <- arr[j,3]
   }
-  # Track which parcel's front vertices need reordering
-  # If false_chunks < chunks, reorder by length of first true chunk
+  print(chunks)
+  print(false_chunks)
   offset <- 0
-  if (false_chunks[i] < chunks[i]){
-    for (j in dim(arr)[1]:1){
+  # First pass: if there are more true chunks, bring true chunk at end of index to the front
+  if (false_chunks < chunks){
+    for (j in nrow(arr):1){
       if (arr[j,3] == 0){
         break
       }
       offset <- offset + 1
     }
-
-    # Reorder parcel
+    
+    # Reorder parcel by shifting indices back by offset (in beginning example, offset = 2)
     arr <- rbind(arr[-1:-j,], arr[1:j,])
   }
-
-  # Second check
+  # Second pass: if there is a false chunk at the beginning, bring it to the back
+  chunks <- 0
+  false_chunks <- 0
   preVal <- FALSE
-  for (j in 1:dim(arr)[1]){
-    if (j == 1 && arr[j,3] == 1){chunks2[i] <- chunks2[i] + 1}
-    else if (j == 1 && arr[j,3] == 0){false_chunks2[i] <- false_chunks2[i] + 1}
-    else if (preVal == FALSE && arr[j,3] == 1){chunks2[i] <- chunks2[i] + 1}
-    else if (preVal && arr[j,3] == 0){false_chunks2[i] <- false_chunks2[i] + 1}
+  for (j in 1:nrow(arr)){
+    if (j == 1 && arr[j,3] == 1){chunks <- chunks + 1}
+    else if (j == 1 && arr[j,3] == 0){false_chunks <- false_chunks + 1}
+    else if (preVal == FALSE && arr[j,3] == 1){chunks <- chunks + 1}
+    else if (preVal == TRUE && arr[j,3] == 0){false_chunks <- false_chunks + 1}
     preVal <- arr[j,3]
   }
-
-  # New code
+  print(chunks)
+  print(false_chunks)
   offset <- 0
-  for (j in 1:dim(arr)[1]){
+  for (j in 1:nrow(arr)){
     if (arr[j,3] == 1){
       break
     }
     offset <- offset + 1
   }
   if (j != 1) {arr <- rbind(arr[-1:-offset,], arr[1:offset,])}
-
-  if (chunks2[i] == 2){
-    for (j in 2:(dim(arr)[1]-1)){
-      if (isTRUE(arr[j,3] == 1 && (arr[j-1,3] == 0 && arr[j+1,3] == 0))){
+  # If there are more than 1 chunk, unmark block points that are isolated
+  if (chunks > 1){
+    for (j in 1:nrow(arr)){
+      if (arr[j,3] == 1 && arr[(j - 2) %% nrow(arr) + 1,3] == 0 && arr[j + 1 %% nrow(arr),3] == 0){
         arr[j,3] <- 0
       }
     }
   }
+  # Third pass, flag any parcels with more than one chunk
+  chunks <- 0
+  false_chunks <- 0
   preVal <- FALSE
   for (j in 1:dim(arr)[1]){
-    if (j == 1 && arr[j,3] == 1){chunks3[i] <- chunks3[i] + 1}
-    else if (j == 1 && arr[j,3] == 0){false_chunks3[i] <- false_chunks3[i] + 1}
-    else if (preVal == FALSE && arr[j,3] == 1){chunks3[i] <- chunks3[i] + 1}
-    else if (preVal && arr[j,3] == 0){false_chunks3[i] <- false_chunks3[i] + 1}
+    if (j == 1 && arr[j,3] == 1){chunks <- chunks + 1}
+    else if (j == 1 && arr[j,3] == 0){false_chunks <- false_chunks + 1}
+    else if (preVal == FALSE && arr[j,3] == 1){chunks <- chunks + 1}
+    else if (preVal && arr[j,3] == 0){false_chunks <- false_chunks + 1}
     preVal <- arr[j,3]
   }
-  parcel[[i]] <- rbind(arr, arr[1,])
-  parcel[[i]][nrow(parcel[[i]]),3] <- 0
+  offset <- 0
+  for (j in 1:nrow(arr)){
+    if (arr[j,3] == 1){
+      break
+    }
+    offset <- offset + 1
+  }
+  if (j != 1) {arr <- rbind(arr[-1:-offset,], arr[1:offset,])}
+  arr <- rbind(arr, arr[1,])
+  arr[nrow(arr), 3] <- 0
+  flag <- chunks > 1
+  return(list(arr, flag))
 }
 
-# table(chunks)
-# table(false_chunks)
-# table(chunks2)
-# table(false_chunks2)
-# table(chunks3)
-# table(false_chunks3)
-#
-# View(cbind(chunks, false_chunks))
-# View(cbind(chunks2, false_chunks2))
+# Run reIndex on all parcels
+# Retain flags from chunks
+flags <- as.data.frame(matrix(nrow = length(parcelXY), ncol = 1))
+colnames(flags) <- "MultiChunk"
+for (i in 1:length(parcelXY)){
+  parcelXY <- reIndex(i)[[1]]
+  flags["MultiChunk",i] <- reIndex(i)[[2]]
+}
 
-# Function to extract parcel front points
-parcelFront <- function(index, type = "Original"){
+## Function: Extract block points as a separate array
+## Params:
+##   index: index of parcel
+##   type: "Original" returns the original, "Mod" returns the block points after the front points were identified
+## Returns:
+##   n by 2 array of block point coordinates
+parcelBlock <- function(index, type = "Original"){
   if (type == "Original"){
-    if (checkFront[index]){
-      return (parcel[[index]][(parcel[[index]][,3] == 1),1:2])
+    if (numBlock[index] > 0){
+      return (parcelXY[[index]][(parcelXY[[index]][,3] == 1),1:2])
     }
     else{
-      print("This parcel has no front points. User needs to manually identify.")
+      print("This parcel has no block points. User needs to manually identify.")
       return (NULL)
     }
   }
   else if (type == "Mod"){
-    if (checkFront[index]){
+    if (numBlock[index] > 0){
       return (modParcel[[index]][(modParcel[[index]][,3] == 1),1:2])
     }
     else{
-      print("This parcel has no front points. User needs to manually identify.")
+      print("This parcel has no block points. User needs to manually identify.")
       return (NULL)
     }
   }
@@ -308,15 +321,20 @@ parcelFront <- function(index, type = "Original"){
   }
 }
 
-# Function to plot parcel with front points bolded
+## Function: Plot parcel with front points bolded
+## Params:
+##   index: index of parcel
+##   type: "Original" returns the original, "Mod" returns the block points after the front points were identified
+## Returns:
+##   plot
 plotParcel <- function(index, type = "Original"){
   if (type == "Original"){
-    eqscplot(parcel[[index]][,1:2], type='l')
-    points(parcelFront(index), pch = 16)
+    eqscplot(parcelXY[[index]][,1:2], type='l')
+    points(parcelBlock(index), pch = 16)
   }
   else if (type == "Mod"){
     eqscplot(modParcel[[index]][,1:2], type='l')
-    points(parcelFront(index, "Mod"), pch = 16)
+    points(parcelBlock(index, "Mod"), pch = 16)
   }
   else{
     print("Type is wrong. Enter either Original or Mod")
@@ -324,15 +342,15 @@ plotParcel <- function(index, type = "Original"){
   }
 }
 
-# Keep track of parcels that need to be manually fixed
-misfits <- vector("logical", length(parcel))
+#################################################RESUME HERE#############################################
+
 
 # Check if front edge is properly extracted
-for (i in 1:length(parcel)){
+for (i in 1:length(parcelXY)){
   print(i)
-  if (is.null(parcelFront(i))) {misfits[i] <- TRUE}
-  numFront[i] <- sum(parcel[[i]][,3])
-  if (numFront[i] < 2) {misfits[i] <- TRUE}
+  if (is.null(parcelBlock(i))) {misfits[i] <- TRUE}
+  numBlock[i] <- sum(parcelXY[[i]][,3])
+  if (numBlock[i] < 2) {misfits[i] <- TRUE}
   # else {
   #   plotParcel(i)
   # }   # Change it to plot the parcel and add the front points as dark circles
@@ -341,13 +359,13 @@ for (i in 1:length(parcel)){
 }
 
 # Identify corner lots
-cornerStats <- vector(mode = "list", length(parcel))
-for (i in 1:length(parcel)){
+cornerStats <- vector(mode = "list", length(parcelXY))
+for (i in 1:length(parcelXY)){
   print(i)
-  if(is.null(parcelFront(i))) {next}              # Skip landlocked
-  # else if (dim(parcelFront(i))[1] < 3) {next}     # Skip parcels with 1 or 2 front points (most likly not a corner)
-  else if (length(parcelFront(i)) < 6) {next}
-  arr <- parcelFront(i)                           # Get the front points
+  if(is.null(parcelBlock(i))) {next}              # Skip landlocked
+  # else if (dim(parcelBlock(i))[1] < 3) {next}     # Skip parcels with 1 or 2 front points (most likly not a corner)
+  else if (length(parcelBlock(i)) < 6) {next}
+  arr <- parcelBlock(i)                           # Get the front points
 
   # Find slopes
   slope <- vector(mode = "double", length = dim(arr)[1]-1)
@@ -370,8 +388,8 @@ for (i in 1:length(parcel)){
 
 
 ## Look at the break down of slope differences across parcels to figure out what is a good threshold
-segDiff <- array(dim = c(length(parcel),2))
-for (i in 1:length(parcel)){
+segDiff <- array(dim = c(length(parcelXY),2))
+for (i in 1:length(parcelXY)){
   if (is.null(cornerStats[[i]])) {
     segDiff[i,1] <- NA
   }
@@ -379,7 +397,7 @@ for (i in 1:length(parcel)){
     segDiff[i,1] <- abs(cornerStats[[i]]$segdiff)/pi*180
   }
 }
-segDiff[,2] <- 1:length(parcel)
+segDiff[,2] <- 1:length(parcelXY)
 colnames(segDiff) <- c("diff", "index")
 segDiff <- na.omit(segDiff)
 
@@ -393,8 +411,8 @@ tibble(val = segDiff[,1]) %>%
   scale_y_continuous(labels = scales::percent)
 
 ## Look at break down of totdiff
-totDiff <- array(dim = c(length(parcel),2))
-for (i in 1:length(parcel)){
+totDiff <- array(dim = c(length(parcelXY),2))
+for (i in 1:length(parcelXY)){
   if (is.null(cornerStats[[i]])) {
     totDiff[i,1] <- NA
   }
@@ -402,7 +420,7 @@ for (i in 1:length(parcel)){
     totDiff[i,1] <- abs(min(cornerStats[[i]]$totdiff1, cornerStats[[i]]$totdiff2))/pi*180
   }
 }
-totDiff[,2] <- 1:length(parcel)
+totDiff[,2] <- 1:length(parcelXY)
 colnames(totDiff) <- c("totdiff", "index")
 totDiff <- na.omit(totDiff)
 
@@ -413,8 +431,8 @@ tibble(val = totDiff[,1]) %>%
   # scale_x_continuous(limits = c(0, 90))
 
 
-isCorner <- vector("logical", length(parcel))
-for (i in 1:length(parcel)){
+isCorner <- vector("logical", length(parcelXY))
+for (i in 1:length(parcelXY)){
   if (is.null(cornerStats[[i]])) {next}
   # if mostly straight, skip   *********************** try taking out this test
   # if (abs(cornerStats[[i]]$totdiff1) < (20/180*pi) || abs(cornerStats[[i]]$totdiff2) < (20/180*pi)) {next}
@@ -522,12 +540,12 @@ save.image("B2.RData")
 # Read in roadway network. Find two closest roadway points to parcel centroid
 # Of the two ends of the front, choose the point shortest normal dist to roadway
 # Select edges that are within a certain angle of the segment on this end
-modParcel <- parcel
-roadway <- vector("list", length(parcel))
-closestRoad <- vector("list", length(parcel))
-slopeDiffs <- vector("double", length(parcel))
-orderRead <- vector("character", length(parcel))
-for (i in 1:length(parcel)){
+modParcel <- parcelXY
+roadway <- vector("list", length(parcelXY))
+closestRoad <- vector("list", length(parcelXY))
+slopeDiffs <- vector("double", length(parcelXY))
+orderRead <- vector("character", length(parcelXY))
+for (i in 1:length(parcelXY)){
   print(i)
   par_cent <- as.vector(st_coordinates(st_centroid(parcels[i,])))
   
@@ -563,8 +581,8 @@ for (i in 1:length(parcel)){
   if (!is.null(cornerStats[[i]])){  # Only modify if it is marked as a corner parcel
 
     # Compare first and last front point. ID which one has shortest perp dist to roadway.
-    first <- parcelFront(i)[1,]
-    last <- parcelFront(i)[nrow(parcelFront(i)),]
+    first <- parcelBlock(i)[1,]
+    last <- parcelBlock(i)[nrow(parcelBlock(i)),]
     distFirst <- perpDist(first[1], first[2], closestRoad[[i]][1,1], closestRoad[[i]][1,2], closestRoad[[i]][2,1], closestRoad[[i]][2,2])
     distLast <- perpDist(last[1], last[2], closestRoad[[i]][1,1], closestRoad[[i]][1,2], closestRoad[[i]][2,1], closestRoad[[i]][2,2])
     slopes <- cornerStats[[i]]$slopes
@@ -660,9 +678,9 @@ flagCorner <- function(index){
   return(prop)
 }
 
-propFront <- vector("double", length(parcel))
+propFront <- vector("double", length(parcelXY))
 
-for(i in 1:length(parcel)){
+for(i in 1:length(parcelXY)){
   print(i)
   if (!misfits[i]){
     propFront[i] <- flagCorner(i)
@@ -691,7 +709,7 @@ tibble(val = propFront) %>%
 # sum(propFront > 0.25)
 
 # Update misfits. Any parcels with proportion > 10% will be flagged for manual review
-for (i in 1:length(parcel)){
+for (i in 1:length(parcelXY)){
   if(propFront[i] > 0.25){misfits[i] <- TRUE}
 }
 
@@ -713,8 +731,8 @@ save.image("C2.RData")
 #   if (isCorner[i]){
 #     print(i)
 #     eqscplot(parcel[[i]],type='l', tol=0.9)
-#     points(parcelFront(i), pch = 1)
-#     text(parcelFront(i), labels = row(parcelFront(i)), pos = 4, offset = 1)
+#     points(parcelBlock(i), pch = 1)
+#     text(parcelBlock(i), labels = row(parcelBlock(i)), pos = 4, offset = 1)
 #     points(modParcel[[i]], pch = 16)
 #     points(closestRoad[[i]])
 #     lines(roadway[[i]])
@@ -823,8 +841,8 @@ sum(misfits)
 
 checkCorner <- function(i){
   # Convert matrices to tibbles
-  tblPar <- as_tibble(parcel[[i]])
-  tblFront <- as_tibble(parcelFront(i))
+  tblPar <- as_tibble(parcelXY[[i]])
+  tblFront <- as_tibble(parcelBlock(i))
   tblModFront <- as_tibble(modParcel[[i]])
   tblClosestRoad <- as_tibble(closestRoad[[i]])
   tblRoadway <- as_tibble(roadway[[i]])
@@ -879,9 +897,9 @@ idEdges <- function(index){
     return (NULL)
   }
   else if (sum(edges) == 1){
-    centF <- parcelFront(index, "Mod")
+    centF <- parcelBlock(index, "Mod")
   } else{
-    centF <- colMeans(parcelFront(index, "Mod"))
+    centF <- colMeans(parcelBlock(index, "Mod"))
   }
   maxDist <- 0
   maxInd <- NULL
@@ -916,8 +934,8 @@ idEdges <- function(index){
 }
 
 # Run idEdges on all parcels
-parcelEdges <- vector("list", length(parcel))
-for (i in 1:length(parcel)){
+parcelEdges <- vector("list", length(parcelXY))
+for (i in 1:length(parcelXY)){
   print(i)
   if (misfits[i]){next}
   # print(i)
@@ -941,7 +959,7 @@ for (i in 1:length(parcel)){
 # test <- st_read(file_bldg)
 
 # Cut out front yard
-# Input: parcel, building_data, parcelFront
+# Input: parcel, building_data, parcelBlock
 # Use first and last front edge points to draw a line
 # Find point or edge on building that is closest (perpendicular distance)
 # Output: st_polygon buffered to cover front yard
@@ -963,17 +981,17 @@ removeFront <- function(par, bldg, front){
 }
 
 # Get histogram of distances between front of building and parcel edge
-frontDist <- vector("double", length(parcel))
-for (i in 1:length(parcel)){
+frontDist <- vector("double", length(parcelXY))
+for (i in 1:length(parcelXY)){
   print(i)
   if (st_is_empty(bldg_all[i,])){
     misfits[i] <- TRUE
     next
   }
   if (!misfits[i]){
-    par <- parcel[[i]][,1:2]
+    par <- parcelXY[[i]][,1:2]
     bldg <- st_coordinates(bldg_all[i,])[,1:2]
-    front <- parcelFront(i, "Mod")
+    front <- parcelBlock(i, "Mod")
     frontDist[i] <- removeFront(par, bldg, front)[[2]]
   }
 }
@@ -1066,15 +1084,15 @@ result_Bldg0 <- NULL
 # misfits[3869] <- TRUE
 
 # 3339
-for (i in 1:length(parcel)){
+for (i in 1:length(parcelXY)){
   if (!misfits[i]){
     # i <- 1
     print(i)
-    par <- parcel[[i]][,1:2]
+    par <- parcelXY[[i]][,1:2]
     edges <- parcelEdges[[i]]
     bldg <- st_geometry(bldg_all[i,]) %>% st_buffer(0)
     # bldg <- st_coordinates(bldg_all[i,])[,1:2]
-    front <- parcelFront(i, "Mod")
+    front <- parcelBlock(i, "Mod")
     side_dist <- 5
     rear_dist <- 10
     geom <- allBuffers(par, edges, bldg, front, side_dist, rear_dist, bldg_dist = 0)
@@ -1234,11 +1252,11 @@ parcels %<>% st_transform(projection)
 bldg_all %<>% st_transform(projection)
 buildable_adu_no_offset %<>% st_transform(projection)
 
-Parcels <- parcels
+parcels <- parcels
 ExistingBuilding <- bldg_all
 AttachedADU <- buildable_adu_no_offset %>% filter(message == "Success")
 
-map <- mapview(Parcels, alpha.regions = 0, legend = FALSE) + mapview(ExistingBuilding, col.regions = "grey", legend = FALSE) + mapview(AttachedADU, col.regions = "green", legend = TRUE)
+map <- mapview(parcels, alpha.regions = 0, legend = FALSE) + mapview(ExistingBuilding, col.regions = "grey", legend = FALSE) + mapview(AttachedADU, col.regions = "green", legend = TRUE)
 map
 mapshot(map, "attached_adu.html")
 
