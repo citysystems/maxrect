@@ -1,7 +1,3 @@
-
-
-
-
 ### Only run this once to install maxrectangle
 # devtools::install_git('https://gitlab.com/b-rowlingson/maxrectangle')
 #*#*#*#* Not used anymore?
@@ -83,7 +79,7 @@ roads <- read_sf("epa_roads_adj_NAD83.geojson") %>% select(name = FULLNAME) %>% 
 # Reformat so all lines for one street name (e.g. "Maple Ln") are represented by one MULTILINE object. Distinguish between Ln, St, Ave, etc. with the same name
 # Technical help: Combining sf objects by attribute https://github.com/r-spatial/sf/issues/290
 roads_combined <- st_sf(name = roads$name %>% unique() %>% .[1:161], 
-                        geometry = test %>% split(.$name) %>% lapply(st_union) %>% do.call(c, .) %>% st_cast())
+                        geometry = roads %>% split(.$name) %>% lapply(st_union) %>% do.call(c, .) %>% st_cast())
 
 ## Object: Parcel points adjacent to streets, hereby coined "block points"
 ## Source: Result of geoprocessing done in QGIS. parcels dissolved by block, and vertices extracted from dissolved polygons.
@@ -94,10 +90,6 @@ blockPts <- st_coordinates(blocks)[,1:2]
 # Arrange the block points by latitude and longitude. Needs to be ordered for binary search later.
 blockPts <- blockPts[order(blockPts[,1], blockPts[,2]),] %>% unique()
 
-######## Rdata of all the raw data
-##########################################
-save.image("A2.RData")
-##########################################
 
 ## Function: Checks if parcel vertex matches a block point. Flagged vertices are candidates for identifying front and street side edges. Uses a binary search on sorted list of coordinates.
 ## Params:
@@ -145,7 +137,7 @@ removeCollinear <- function(arr){
 }
 
 ## Object: Coordinates of parcel vertices
-## Format: Vector of lists. Each list contains an array of coordinates.
+## Format: Vector of lists. Each list contains an array of coordinates. Each array has columns: X, Y, block pt marker. For third column, 0 means not a block point, 1 means block point.
 ## Purpose: Easy access to parcel vertices, which will later be labeled as block points or not.
 parcelXY <- vector("list", nrow(parcels))
 for (i in 1:nrow(parcels)){
@@ -164,7 +156,6 @@ for (i in 1:length(parcelXY)){
 # number of block points in "numBlock object."
 numBlock <- vector("double", length(parcelXY))
 for (i in 1:length(parcelXY)){
-  print(i)
   poly <- parcelXY[[i]]
   # poly <- rbind(poly, poly[1,])
   parcelXY[[i]] <- cbind(poly, vector(length = nrow(poly)))
@@ -180,8 +171,6 @@ for (i in 1:length(parcelXY)){
 # These can be used to check if the identification of block points is working properly
 # sum(numBlock > 0)
 # table(numBlock)
-
-
 
 
 ## Function: Parcel vertices are reindexed to make sure that block points are not "wrapping around" and creating two "chunks" of block points.
@@ -202,7 +191,6 @@ for (i in 1:length(parcelXY)){
 reIndex <- function(i){
   chunks <- 0
   false_chunks <- 0
-  
   preVal <- FALSE
   arr <- parcelXY[[i]][-length(parcelXY[[i]]),]
   for (j in 1:nrow(arr)){
@@ -212,8 +200,6 @@ reIndex <- function(i){
     else if (preVal == TRUE && arr[j,3] == 0){false_chunks <- false_chunks + 1}
     preVal <- arr[j,3]
   }
-  print(chunks)
-  print(false_chunks)
   offset <- 0
   # First pass: if there are more true chunks, bring true chunk at end of index to the front
   if (false_chunks < chunks){
@@ -223,7 +209,6 @@ reIndex <- function(i){
       }
       offset <- offset + 1
     }
-    
     # Reorder parcel by shifting indices back by offset (in beginning example, offset = 2)
     arr <- rbind(arr[-1:-j,], arr[1:j,])
   }
@@ -238,8 +223,6 @@ reIndex <- function(i){
     else if (preVal == TRUE && arr[j,3] == 0){false_chunks <- false_chunks + 1}
     preVal <- arr[j,3]
   }
-  print(chunks)
-  print(false_chunks)
   offset <- 0
   for (j in 1:nrow(arr)){
     if (arr[j,3] == 1){
@@ -283,11 +266,12 @@ reIndex <- function(i){
 
 # Run reIndex on all parcels
 # Retain flags from chunks
-flags <- as.data.frame(matrix(nrow = length(parcelXY), ncol = 1))
-colnames(flags) <- "MultiChunk"
+flags <- as.data.frame(matrix(nrow = length(parcelXY), ncol = 2))
+colnames(flags) <- c("APN","MultiChunk")
+flags$APN <- parcels$APN
 for (i in 1:length(parcelXY)){
-  parcelXY <- reIndex(i)[[1]]
-  flags["MultiChunk",i] <- reIndex(i)[[2]]
+  parcelXY[[i]] <- reIndex(i)[[1]]
+  flags$MultiChunk[i] <- reIndex(i)[[2]]
 }
 
 ## Function: Extract block points as a separate array
@@ -342,15 +326,15 @@ plotParcel <- function(index, type = "Original"){
   }
 }
 
-#################################################RESUME HERE#############################################
-
-
-# Check if front edge is properly extracted
+# Mark parcels that are "landlocked," aka do not have any vertices identified as block points.
+flags$Landlocked <- FALSE
+flags$OneBlockPt <- FALSE
 for (i in 1:length(parcelXY)){
   print(i)
-  if (is.null(parcelBlock(i))) {misfits[i] <- TRUE}
-  numBlock[i] <- sum(parcelXY[[i]][,3])
-  if (numBlock[i] < 2) {misfits[i] <- TRUE}
+  if (is.null(parcelBlock(i))) {flags$Landlocked[i] <- TRUE}
+  if (sum(parcelXY[[i]][,3]) == 1) {flags$OneBlockPt[i] <- TRUE}
+  #~#~# Quality Check
+  # Check if front edge vertices are properly marked
   # else {
   #   plotParcel(i)
   # }   # Change it to plot the parcel and add the front points as dark circles
@@ -358,193 +342,89 @@ for (i in 1:length(parcelXY)){
   # invisible(readline(prompt="Press [enter] to continue"))  # Manually press enter to continue
 }
 
-# Identify corner lots
-cornerStats <- vector(mode = "list", length(parcelXY))
-for (i in 1:length(parcelXY)){
-  print(i)
-  if(is.null(parcelBlock(i))) {next}              # Skip landlocked
-  # else if (dim(parcelBlock(i))[1] < 3) {next}     # Skip parcels with 1 or 2 front points (most likly not a corner)
-  else if (length(parcelBlock(i)) < 6) {next}
-  arr <- parcelBlock(i)                           # Get the front points
-
-  # Find slopes
-  slope <- vector(mode = "double", length = dim(arr)[1]-1)
+## Function: Obtain slopes for edges connecting parcel's block point. The slopes will be used for corner parcels in combination
+##   with the roadway network to properly identify the front edge, and the street edge
+## Params:
+##   i: index of parcel
+## Returns:
+##   corner parcel: double vector of angles in radians
+##   not a corner parcel: NULL
+cornerSlopes <- function(i){
+  if(sum(parcelXY[[i]][,3]) < 3){return(NULL)}
+  arr <- parcelBlock(i)
+  slope <- vector("double", nrow(arr) - 1)
   for (j in 1:length(slope)){
     slope[j] <- atan2(arr[j+1,2]-arr[j,2], arr[j+1,1]-arr[j,1])
   }
-  totslo1 <- atan2(arr[dim(arr)[1],2]-arr[1,2], arr[dim(arr)[1],1]-arr[1,1])
-  totslo2 <- (totslo1 + pi) %% 2*pi
-  # Save slopes
-  cornerStats[[i]]$slopes <- slope
-  # Average slope
-  cornerStats[[i]]$avg <- mean(slope)
-  # Difference in slope between first segment and hypotenuse (first to last point)
-  cornerStats[[i]]$totdiff1 <- atan2(sin(totslo1-slope[1]),cos(totslo1-slope[1]))
-  # Difference in slope between last segment and hypotenuse (first to last point)
-  cornerStats[[i]]$totdiff2 <- atan2(sin(totslo2-slope[length(slope)]+pi),cos(totslo2-slope[length(slope)]+pi))
-  # Difference in slope between first segment and last segment
-  cornerStats[[i]]$segdiff <- atan2(sin(slope[length(slope)]-slope[1]), cos(slope[length(slope)]-slope[1]))
+  return(slope)
 }
 
-
-## Look at the break down of slope differences across parcels to figure out what is a good threshold
-segDiff <- array(dim = c(length(parcelXY),2))
-for (i in 1:length(parcelXY)){
-  if (is.null(cornerStats[[i]])) {
-    segDiff[i,1] <- NA
+## Function: finds shortest distance between a point and a line segment
+## Params:
+##   x,y: coordinates for point
+##   x1,y1: coordinates for first point representing line segment
+##   x2,y2: coordinates for second point representing line segment
+##   type: specifies which distance is returned
+## Returns:
+##   for "Norm": normal distance. If point is outside of line segment, then shortest distance to the projected line segment
+##   for "True": true distance. If point is outside of line segment, then the distance from point to the closer point of the line segment
+## Source for Norm: https://en.wikipedia.org/wiki/Distance_from_a_point_to_a_line#Line_defined_by_two_points
+shortestDist <- function(x, y, x1, y1, x2, y2, type = "Norm"){
+  if (type == "Norm"){
+    return (abs((y2-y1) * x - (x2-x1) * y + x2*y1 - y2*x1)/sqrt((y2 - y1)^2 + (x2 - x1)^2))
   }
-  else {
-    segDiff[i,1] <- abs(cornerStats[[i]]$segdiff)/pi*180
-  }
-}
-segDiff[,2] <- 1:length(parcelXY)
-colnames(segDiff) <- c("diff", "index")
-segDiff <- na.omit(segDiff)
-
-tibble(val = segDiff[,1]) %>%
-  ggplot(., aes(x = val)) +
-  geom_histogram(aes(y = cumsum(..count..)/sum(..count..)), binwidth = 5) +
-  scale_x_reverse(
-    breaks = seq(-180, 180, 30)
-    # , limits = c(90, 0)
-    ) +
-  scale_y_continuous(labels = scales::percent)
-
-## Look at break down of totdiff
-totDiff <- array(dim = c(length(parcelXY),2))
-for (i in 1:length(parcelXY)){
-  if (is.null(cornerStats[[i]])) {
-    totDiff[i,1] <- NA
-  }
-  else {
-    totDiff[i,1] <- abs(min(cornerStats[[i]]$totdiff1, cornerStats[[i]]$totdiff2))/pi*180
-  }
-}
-totDiff[,2] <- 1:length(parcelXY)
-colnames(totDiff) <- c("totdiff", "index")
-totDiff <- na.omit(totDiff)
-
-tibble(val = totDiff[,1]) %>%
-  ggplot(., aes(x = val)) +
-  geom_histogram(aes(y = ..count../sum(..count..)), binwidth = 5) +
-  scale_y_continuous(labels = scales::percent) #+
-  # scale_x_continuous(limits = c(0, 90))
-
-
-isCorner <- vector("logical", length(parcelXY))
-for (i in 1:length(parcelXY)){
-  if (is.null(cornerStats[[i]])) {next}
-  # if mostly straight, skip   *********************** try taking out this test
-  # if (abs(cornerStats[[i]]$totdiff1) < (20/180*pi) || abs(cornerStats[[i]]$totdiff2) < (20/180*pi)) {next}
-  # if first and last segment have more than 60 degrees diff, mark as corner
-  # if (abs(cornerStats[[i]]$segdiff) >= (40/180*pi)) {isCorner[i] <- TRUE}
-  else {isCorner[i] <-  TRUE}
-}
-
-# Helper function: normal distance between a point and a line segment
-# (x,y) is the point, (x1,y2) and (x2,y2) make the line segment
-#
-# https://en.wikipedia.org/wiki/Distance_from_a_point_to_a_line#Line_defined_by_two_points
-perpDist <- function(x, y, x1, y1, x2, y2){
-  return (abs((y2-y1) * x - (x2-x1) * y + x2*y1 - y2*x1)/sqrt((y2 - y1)^2 + (x2 - x1)^2))
-}
-
-# Helper function: shortest distance between a point and a line segment
-# (x,y) is the point, (x1,y2) and (x2,y2) make the line segment
-#
-# https://stackoverflow.com/a/6853926
-distPtLineSeg <- function(x, y, x1, y1, x2, y2){
-  A <- x - x1
-  B <- y - y1
-  C <- x2 - x1
-  D <- y2 - y1
-  dot <- A * C + B * D
-  len_sq <- C * C + D * D
-  param <- -1
-  if (len_sq != 0){  # in case of 0 length line
-    param <- dot / len_sq
-  }
-  xx <- 0
-  yy <- 0
-  if (param < 0){
-    xx <- x2
-    yy <- y1
-  }
-  else if (param > 1){
-    xx <- x2
-    yy <- y2
+  else if(type == "True"){
+    px <- x2 - x1
+    py <- y2 - y1
+    norm <- px * px + py * py
+    u <- ((x - x1) * px + (y - y1) * py) / norm
+    if (u > 1) {u <- 1}
+    else if (u < 0) {u <- 0}
+    xx <- x1 + u * px
+    yy <- y1 + u * py
+    dx <- xx - x
+    dy <- yy - y
+    return (sqrt(dx * dx + dy * dy))
   }
   else{
-    xx = x1 + param * C
-    yy = y1 + param * D
+    print("Type is wrong. Enter either Norm or True")
+    return (NULL)
   }
-  dx <- x - xx
-  dy <- y - yy
-  return (sqrt(dx * dx + dy * dy))
 }
 
-# Check if 2 line segments intersect (line 1 made by point and slope) (line 2 made by two points)
-# Input: point 1 of line segment, point 2 of line segment, point of line, slope of line
-# Input: p1, p2, pt are vectors (length 2), slope is in degrees
-# Output: returns true/false
-# https://stackoverflow.com/a/565282/68063
-checkIntersect <- function(p1, p2, pt, slope) {
-  q <- p1
-  s <- p2 - p1
-  # if (s[1]*s[1]+s[2]*s[2] < 1e-5) {return (FALSE)} # if two points are too close together,
-  p <- pt
-  r <- c(cos(slope / 180 * pi), sin(slope / 180 * pi))
-  if (crossprod2D(r, s) == 0) {
-    # lines are parallel and do not intersect
-    return(NULL)
-  }
-  t <- crossprod2D((q - p), s) / crossprod2D(r, s)
-  u <- crossprod2D((q - p), r) / crossprod2D(r, s)
-  if (u <= 1 && u >= 0) {
-    return(p + t * r)
-  }
-  else
-    return(NULL)
-}
+######## Rdata of all the raw data
+##########################################
+save.image("A2.RData")
+##########################################
 
-# Check if 2 lines intersect (each one consists of (x1, y1, r_x, r_y))
-# Input: line1, line2 (length 4 vector)
-# Output: returns point of intersection. if no intersection, returns NULL
-# https://stackoverflow.com/a/565282/68063
-intersectLines <- function(line1, line2) {
-  p <- c(line1[1],line1[2])
-  r <- c(line1[3],line1[4])
-  q <- c(line2[1],line2[2])
-  s <- c(line2[3],line2[4])
+#################################################RESUME HERE#############################################
 
-  # if (s[1]*s[1]+s[2]*s[2] < 1e-5) {return (FALSE)} # if two points are too close together,
-  if (crossprod2D(r, s) == 0) {
-    # lines are parallel and do not intersect
-    return(NULL)
-  }
-  t <- crossprod2D((q - p), s) / crossprod2D(r, s)
-  u <- crossprod2D((q - p), r) / crossprod2D(r, s)
-  return(p + t * r)
-}
+## Object: Parcel cooordinates with modified markers for front block points and side block points
+## Source: Modified from parcelXY
+## Format: Third column has been modified. 0 = non block point, 1 = front point, 2 = street side point
+## Purpose: Corner parcels need a distinction between front and street side edges, since they face more than one street. 
+modParcel <- parcelXY
+## Object: Closest roadway segment linked to each parcel's address
+## Source: Finding roadway segment with smallest true minimum distance to any part of the parcel
+## Format: SF LINESTRING object
+## Purpose: Used to compare to slopes of edges between block points for identifying front and street edges
+closestRoad <- vector("list", length(parcelXY))
+## Object: 
+## Source: 
+## Format: 
+## Purpose: 
+slopeDiffs <- vector("double", length(parcelXY))
+## Object: 
+## Source: 
+## Format: 
+## Purpose: 
+orderRead <- vector("character", length(parcelXY))
 
-# Helper Function: finds cross product for two vectors
-crossprod2D <- function(u, v){
-  return(u[1]*v[2]-u[2]*v[1])
-}
-
-########################################################
-save.image("B2.RData")
-########################################################
 
 # Extract front edge for corner lot
 # Read in roadway network. Find two closest roadway points to parcel centroid
 # Of the two ends of the front, choose the point shortest normal dist to roadway
 # Select edges that are within a certain angle of the segment on this end
-modParcel <- parcelXY
-roadway <- vector("list", length(parcelXY))
-closestRoad <- vector("list", length(parcelXY))
-slopeDiffs <- vector("double", length(parcelXY))
-orderRead <- vector("character", length(parcelXY))
 for (i in 1:length(parcelXY)){
   print(i)
   par_cent <- as.vector(st_coordinates(st_centroid(parcels[i,])))
@@ -578,14 +458,14 @@ for (i in 1:length(parcelXY)){
   # We now have the slope of the roadway
   road_slo <- (atan2(seg[2,2]- seg[1,2], seg[2,1]- seg[1,1]) + 2*pi) %% 2*pi
   
-  if (!is.null(cornerStats[[i]])){  # Only modify if it is marked as a corner parcel
+  if (!is.null(cornerSlopes(i))){  # Only modify if it is marked as a corner parcel
 
     # Compare first and last front point. ID which one has shortest perp dist to roadway.
     first <- parcelBlock(i)[1,]
     last <- parcelBlock(i)[nrow(parcelBlock(i)),]
-    distFirst <- perpDist(first[1], first[2], closestRoad[[i]][1,1], closestRoad[[i]][1,2], closestRoad[[i]][2,1], closestRoad[[i]][2,2])
-    distLast <- perpDist(last[1], last[2], closestRoad[[i]][1,1], closestRoad[[i]][1,2], closestRoad[[i]][2,1], closestRoad[[i]][2,2])
-    slopes <- cornerStats[[i]]$slopes
+    distFirst <- shortestDist(first[1], first[2], closestRoad[[i]][1,1], closestRoad[[i]][1,2], closestRoad[[i]][2,1], closestRoad[[i]][2,2])
+    distLast <- shortestDist(last[1], last[2], closestRoad[[i]][1,1], closestRoad[[i]][1,2], closestRoad[[i]][2,1], closestRoad[[i]][2,2])
+    slopes <- cornerSlopes(i)
     # Case 1: First point is closer. Starting from first edge, grab all edges going up to the bisecting slope. If slope difference is less than 90 degrees, go up to 45 degrees
     if (distFirst < distLast){
       print("First < Last")
@@ -667,7 +547,7 @@ for (i in 1:length(parcelXY)){
 
 flagCorner <- function(index){
   # Make sure this is marked as a potential corner lot
-  # if(is.null(cornerStats[[index]])){
+  # if(is.null(cornerSlopes(index))){
     # print("This is not marked as a potential corner lot")
     # return(NULL)}
   par <- modParcel[[index]][,1:2]
@@ -969,7 +849,7 @@ removeFront <- function(par, bldg, front){
   minIndex <- 0   # track index for closest point to line
   minDist <- 1e99 # track associated minimum distance
   for (i in 1:dim(bldg)[1]){
-    dist <- abs(perpDist(bldg[i,1], bldg[i,2], p_i[1], p_i[2], p_f[1], p_f[2]))
+    dist <- abs(shortestDist(bldg[i,1], bldg[i,2], p_i[1], p_i[2], p_f[1], p_f[2]))
     if (dist < minDist){
       minIndex <- i
       minDist <- dist
