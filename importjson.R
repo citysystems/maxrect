@@ -428,7 +428,7 @@ shortestDist <- function(x, y, x1, y1, x2, y2, type = "Norm"){
 
 
 
-#################################################RESUME HERE#############################################
+
 
 
 ## Object: Parcel SF objects after cleaning up points
@@ -762,33 +762,38 @@ buffer <- function(st_par, ind, dist){
 ## Returns:
 ##   SF POLYGON object representing buildable area after all setbacks removed
 allBuffers <- function(st_par, edges, st_bldg, side_dist, rear_dist, street_dist, bldg_dist = 0){
-  # Remove building footprint from parcel
-  result <- st_difference(st_buffer(st_par,0), st_buffer(st_bldg, bldg_dist, joinStyle = "MITRE", mitreLimit = 5))
   #result <- st_difference(st_buffer(st_par,0), st_buffer(st_bldg, bldg_dist,nQuadSegs = 2, endCapStyle = "SQUARE", joinStyle = "MITRE", mitreLimit = 5) %>% st_set_precision(1e9)) #%>% st_buffer(-1e-9, joinStyle = "MITRE", mitreLimit = 5) %>% st_make_valid() %>% st_set_precision(1e9)
   # result <- st_intersection(result, result)
-  for (i in 1:length(edges)){
+  for (i in 1:(nrow(edges)-1)){
     if (edges[i,] == "Front"){next}
     else if (edges[i,] == "Side"){
       buff <- buffer(st_par, i, side_dist) #%>% st_set_precision(1e9)
       # result <- st_intersection(result, result)
       result <- st_difference(st_buffer(result, 0), buff)
+      plot(result, col = "red")
       #result <- st_difference(st_buffer(result, 0) %>% st_set_precision(1e9), buff) %>% st_buffer(-1e-9, joinStyle = "MITRE", mitreLimit = 5) %>% st_set_precision(1e9) %>% st_make_valid() %>% st_set_precision(1e9)
     }
     else if (edges[i,] == "Street"){
       buff <- buffer(st_par, i, street_dist) #%>% st_set_precision(1e9)
       # result <- st_intersection(result, result)
       result <- st_difference(st_buffer(result, 0), buff)
+      plot(result, col = "red")
       #result <- st_difference(st_buffer(result, 0) %>% st_set_precision(1e9), buff) %>% st_buffer(-1e-9, joinStyle = "MITRE", mitreLimit = 5) %>% st_set_precision(1e9) %>% st_make_valid() %>% st_set_precision(1e9)
     }
     else if (edges[i,] == "Rear"){
       buff <- buffer(st_par, i, rear_dist) #%>% st_set_precision(1e9)
       # result <- st_intersection(result, result)
       result <- st_difference(st_buffer(result, 0), buff)
+      plot(result, col = "red")
       #result <- st_difference(st_buffer(result, 0) %>% st_set_precision(1e9), buff) %>% st_buffer(-1e-9, joinStyle = "MITRE", mitreLimit = 5) %>% st_set_precision(1e9) %>% st_make_valid() %>% st_set_precision(1e9)
     }
   }
   # Clean up. Get rid of any non-POLYGON SF object, and POLYGONs with areas less than 160
-  if (st_geometry_type(result) == "GEOMETRYCOLLECTION"){
+  return (result)
+  if(st_is_empty(result)){
+    return (result)
+  }
+  else if (st_geometry_type(result) == "GEOMETRYCOLLECTION"){
     newResult <- st_sfc(st_polygon(list()), crs = 102643)
     resultParts <- st_cast(result)
     for (j in 1:length(resultParts)){
@@ -812,24 +817,26 @@ save.image("D2.RData")
 
 # Find the available area after buffers. No building set back. Side = 5 ft, Rear = 10 ft, Street = 12 ft
 buildable_area_a <- NULL
-#583, 1721, 3423
-
-# 3339
-for (i in 3424:length(modParcel)){
+#Errors given for: 583, 1721, 3423
+flags$BufferFail <- FALSE
+for (i in 1:length(modParcel)){
   if (sum(as.numeric(flags[i,-1])) == 0){
     print(i)
     st_par <- st_geometry(buildable_area[i,])
     edges <- modParcel[[i]][,4]
     st_bldg <- st_geometry(bldg_all[i,]) %>% st_buffer(0)
-    geom <- allBuffers(st_par, edges, st_bldg, 5, 10, 12, 0)
-    # if (is.character(geom) || nrow(geom) == 0){
-    #   sf <- st_sf(APN = parcels$properties.APN[[i]], valid = FALSE, geometry = st_sfc(st_polygon()))
-    # }
+    geom <- tryCatch(
+      {allBuffers(st_par, edges, st_bldg, 5, 10, 12, 0)},
+      error = function(e){
+        flags$BufferFail[i] <<- TRUE       # Global assignment needed in tryCatch, otherwise doesn't assign
+        st_sfc(st_polygon(), crs = 102643)
+      }
+    )
     if (length(geom) == 0){
       sf <- st_sf(APN = parcels$APN[i], geometry = st_sfc(st_polygon(), crs = 102643))
     }
     else{
-      sf <- st_sf(APN = parcels$APN[i], geometry = geom)
+      sf <- st_sf(APN = parcels$APN[i], geometry = geom, crs = 102643)
     }
     buildable_area_a <- rbind(buildable_area_a, sf)
   }
@@ -839,16 +846,11 @@ for (i in 3424:length(modParcel)){
   }
 }
 
-# for (i in 1:length(parcel)){
-#   if (!misfits[i]){
-#     eqscplot(st_coordinates(buildable_area_a[i,]), type='l')
-#     invisible(readline(prompt="Press [enter] to continue"))
-#   }
-# }
-
 ############################################
 save.image("E2.RData")
 ############################################
+
+#####RESUME HERE!!!!#################
 
 prepPoly <- function(poly){
   minX <- min(poly[,1])              # get the smallest x coord
@@ -889,81 +891,72 @@ for (i in 1:nrow(buildable)){
   buildable$ymin[i] <- min(coord[,2])
   st_geometry(buildable[i,]) <- st_geometry(buildable[i,]) - c(buildable$xmin[i], buildable$ymin[i])
 }
-beep(3)
 ############################################
 save.image("F2.RData")
 ############################################
 
+
 # Apply minimum 8 x 20 area to get rid of unviable spaces
 # Merge the possible rectangles together
-buildable_adu <- NULL
-
-# 604
+buildable_aadu <- NULL
+flags$ViableSpaceFail <- FALSE
 for (i in 1:nrow(buildable)){
-  if (i == 627 || i == 790 || i == 1104 || i == 1120 || i == 2350 || i == 2463 || i == 2496 || i == 2524 || i == 2577 || i == 2696){
-    sf <- st_sf(APN = buildable$APN[i], message = "Invalid geometry", geometry = st_sfc(st_polygon(), crs = 102643))
-    buildable_adu <- rbind(buildable_adu, sf)
-    next
-  }
   if (buildable$valid[i] == FALSE){
     sf <- st_sf(APN = buildable$APN[i], message = "Invalid geometry", geometry = st_sfc(st_polygon(), crs = 102643))
-    buildable_adu <- rbind(buildable_adu, sf)
+    buildable_aadu <- rbind(buildable_aadu, sf)
     next
   }
-  poly <- st_geometry(buildable[i,]) %>% st_cast("POLYGON")
-  result <- st_sfc(st_polygon(), crs = 102643)
-  msg <- ""
-  print(i)
-  for (j in 1:length(poly)){
-    print(j)
-    # Skip this one if the area is smaller than 160 SF (minimum area for ADU) or if there is no geometry
-    if (as.numeric(st_area(poly[j])) < 160){
-      msg <- paste(msg, "Area less than 160")
-      next
+  sf <- tryCatch(
+    {
+      poly <- st_geometry(buildable[i,]) %>% st_cast("POLYGON")
+      result <- st_sfc(st_polygon(), crs = 102643)
+      msg <- ""
+      print(i)
+      for (j in 1:length(poly)){
+        print(j)
+        # Skip this one if the area is smaller than 160 SF (minimum area for ADU) or if there is no geometry
+        if (as.numeric(st_area(poly[j])) < 160){
+          msg <- paste(msg, "Area less than 160")
+          next
+        }
+        if (st_is_empty(poly[j])){
+          msg <- paste(msg, "Empty geometry")
+          next
+        }
+        if (!st_is_valid(poly[j])){
+          msg <- paste(msg, "Invalid geometry")
+          next
+        }
+        rect <- largestRect(poly[j], print = TRUE)
+        if (is.character(rect)){
+          msg <- paste(msg, rect)
+        }
+        else{
+          result <- st_union(result, rect)
+        }
+      }
+      if (length(result) == 0 || st_is_empty(result)){
+        st_sf(APN = buildable$APN[i], message = msg, geometry = st_sfc(st_polygon(), crs = 102643))
+      }
+      else{
+        st_sf(APN = buildable$APN[i], message = "Success", geometry = result)
+      }
+    },
+    error = function(e){
+      flags$ViableSpaceFail[i] <<- TRUE
+      st_sf(APN = buildable$APN[i], message = msg, geometry = st_sfc(st_polygon(), crs = 102643))
     }
-    if (st_is_empty(poly[j])){
-      msg <- paste(msg, "Empty geometry")
-      next
-    }
-    if (!st_is_valid(poly[j])){
-      msg <- paste(msg, "Invalid geometry")
-      next
-    }
-    rect <- largestRect(poly[j], print = TRUE)
-    if (is.character(rect)){
-      msg <- paste(msg, rect)
-    }
-    else{
-      result <- st_union(result, rect)
-    }
-  }
-  if (length(result) == 0 || st_is_empty(result)){
-    sf <- st_sf(APN = buildable$APN[i], message = msg, geometry = st_sfc(st_polygon(), crs = 102643))
-  }
-  else{
-    sf <- st_sf(APN = buildable$APN[i], message = "Success", geometry = result)
-  }
-  buildable_adu <- rbind(buildable_adu, sf)
+  )
+  buildable_aadu <- rbind(buildable_aadu, sf)
 }
 
-
-##### Work in Progress
-# test <- largestRect(buildable_area_a[3551,], print = TRUE)
-# 
-# for(i in 1:(length(test)-1)){
-#   if(test[i] == test[i+1]){
-#     print(test[i])
-#   }
-# }
-
-
-buildable_adu_no_offset <- buildable_adu
+buildable_aadu_no_offset <- buildable_aadu
 # Return geometries to original coordinates, no offsets
-for(i in 1:nrow(buildable_adu_no_offset)){
+for(i in 1:nrow(buildable_aadu_no_offset)){
   print(i)
   offset <- c(buildable$xmin[i], buildable$ymin[i])
-  st_geometry(buildable_adu_no_offset[i,]) <- st_geometry(buildable_adu_no_offset[i,]) + offset
-  buildable_adu_no_offset[i,] <- fill_holes(buildable_adu_no_offset[i,], 1e5)
+  st_geometry(buildable_aadu_no_offset[i,]) <- st_geometry(buildable_aadu_no_offset[i,]) + offset
+  buildable_aadu_no_offset[i,] <- fill_holes(buildable_aadu_no_offset[i,], 1e5)
 }
 
 ##############################################
