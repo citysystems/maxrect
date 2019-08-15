@@ -1,8 +1,5 @@
 ### Only run this once to install maxrectangle
 # devtools::install_git('https://gitlab.com/b-rowlingson/maxrectangle')
-#*#*#*#* Not used anymore?
-
-library(maxrectangle)   #*#*# Not used anymore? 
 library(geojsonsf)
 library(jsonlite)
 library(readr)
@@ -17,8 +14,6 @@ library(lwgeom)
 library(smoothr)
 library(mapview)
 library(beepr)
-
-
 # Note: if you are running long code and want the system to play a sound when there is an error, you can use this
 options(error = function(){beep(3)})
 
@@ -376,23 +371,6 @@ for (i in 1:length(parcelXY)){
   # invisible(readline(prompt="Press [enter] to continue"))  # Manually press enter to continue
 }
 
-## Function: Obtain slopes for edges connecting parcel's block point. The slopes will be used for corner parcels in combination
-##   with the roadway network to properly identify the front edge, and the street edge
-## Params:
-##   i: index of parcel
-## Returns:
-##   corner parcel: double vector of angles in radians
-##   not a corner parcel: NULL
-# cornerSlopes <- function(i){
-#   if(sum(parcelXY[[i]][,3]) < 3){return(NULL)}
-#   arr <- parcelBlock(i)
-#   slope <- vector("double", nrow(arr) - 1)
-#   for (j in 1:length(slope)){
-#     slope[j] <- atan2(arr[j+1,2]-arr[j,2], arr[j+1,1]-arr[j,1])
-#   }
-#   return(slope)
-# }
-
 ## Function: finds shortest distance between a point and a line segment
 ## Params:
 ##   x,y: coordinates for point
@@ -426,11 +404,6 @@ shortestDist <- function(x, y, x1, y1, x2, y2, type = "Norm"){
   }
 }
 
-
-
-
-
-
 ## Object: Parcel SF objects after cleaning up points
 ## Source: Coordinates pulled from parcelXY
 ## Format: SF object
@@ -444,22 +417,11 @@ for (i in 1:nrow(parcels)){
   modparcels <- rbind(modparcels, sf)
 }
 
-
 ## Object: Parcel cooordinates with modified markers for front block points and side block points
 ## Source: Modified from parcelXY
 ## Format: Third column has been modified. 0 = non block point, 1 = front point, 2 = street side point
 ## Purpose: Corner parcels need a distinction between front and street side edges, since they face more than one street. 
 modParcel <- parcelXY
-# ## Object: 
-# ## Source: 
-# ## Format: 
-# ## Purpose: 
-# slopeDiffs <- vector("double", length(parcelXY))
-# ## Object: 
-# ## Source: 
-# ## Format: 
-# ## Purpose: 
-# orderRead <- vector("character", length(parcelXY))
 
 ## Function: Find closest roadway segment linked to each parcel's address
 ## Params:
@@ -568,7 +530,6 @@ cutFrontYard <- function(i){
 save.image("A2.RData")
 ##########################################
 
-
 buildable_area <- modparcels
 for (i in 1:nrow(modparcels)){
   if (sum(as.numeric(flags[i,-1])) == 0){
@@ -616,10 +577,10 @@ sortCorner <- function(i){
 save.image("C2.RData")
 ##########################################
 
+# Mark vertices for street facing vs. not street facing
 for (i in 1:length(modParcel)){
   modParcel[[i]] <- sortCorner(i)
 }
-beep(3)
 
 ## Function: Check if new parcel is marked properly. There should only be one consecutive chunk of vertices marked as "2" or front-facing
 ## Params:
@@ -722,12 +683,6 @@ for (i in 1:length(modParcel)){
   modParcel[[i]] <- as_tibble(cbind(as_tibble(modParcel[[i]]), edges))
 }
 
-# Helper Function: buffer for one edge
-# Input: parcel
-# Param: edge_index, buffer distance
-# Returns a buffer around the edge with distance dist
-# Returns as a st_polygon
-
 ## Function: Create a buffer based on a polygon edge and dist. This will be used to remove setback areas from buildable_area
 ## Params:
 ##   st_par: SF POLYGON parcel object
@@ -745,14 +700,6 @@ buffer <- function(st_par, ind, dist){
   return(buffered)
 }
 
-# Side, street, and rear buffers
-# Input: parcel, edgeID (side, rear, street), building footprint, front points
-# Param: side buffer dist, rear buffer dist
-# Draw parallel lines that are [buffer dist] away from each side
-# Select parallel lines that are closer to parcel centroid, so lines are going inward, not outward
-# Find intersection between adjacent lines to reconstruct buffered parcel
-# Check whether buffer overlaps with building. If it does, adjust so that there is no intersection in result
-# Output: new parcel coordinates, array (n by 2)
 ## Function: Complete all buffers to remove side, street, rear, building setbacks.
 ## Params:
 ##   par: SF POLYGON buildable_area (after front yard cut)
@@ -815,9 +762,9 @@ save.image("D2.RData")
 ################################################################
 
 
-# Find the available area after buffers. No building set back. Side = 5 ft, Rear = 10 ft, Street = 12 ft
+## Find the available area after buffers. No building set back. Side = 5 ft, Rear = 10 ft, Street = 12 ft
+## tryCatch() used so that if there is an error when using allBuffers(), the parcel is flagged and the result is an empty polygon
 buildable_area_a <- NULL
-#Errors given for: 583, 1721, 3423
 flags$BufferFail <- FALSE
 for (i in 1:length(modParcel)){
   if (sum(as.numeric(flags[i,-1])) == 0){
@@ -850,54 +797,35 @@ for (i in 1:length(modParcel)){
 save.image("E2.RData")
 ############################################
 
-#####RESUME HERE!!!!#################
-
-prepPoly <- function(poly){
-  minX <- min(poly[,1])              # get the smallest x coord
-  minY <- min(poly[,2])              # get the smallest y coord
-  poly[,1] <- poly[,1]- minX         # adjust for relative coordinates
-  poly[,2] <- poly[,2]- minY         # adjust for relative coordinates
-  return(list(poly,minX,minY))
-}
-
-##### misfits are already filtered out
-# misfits <- cbind(misfits, APN = parcels$properties.APN)
-# 
-# # misfits identified on buildable_area_a
-# for (i in 1:nrow(buildable_area_a)){
-#   buildable_area_a$misfit[i] <- misfits[which(buildable_area_a$APN[i] == misfits, TRUE)[1],1]
-# }
-
+# Mark whether parcels are valid
 buildable_area_a$valid <- st_is_valid(buildable_area_a)
-buildable_area_a$xmin <- 0
-buildable_area_a$ymin <- 0
 
-# Get XMin and YMin and shift coordinates (avoids numerical errors)
-buildable <- buildable_area_a
-buildable$xmin <- 0
-buildable$ymin <- 0
-for (i in 1:nrow(buildable)){
+# Adjust SF objects by shifting coordinates by (XMin, YMin) (avoids numerical errors)
+buildable_a <- buildable_area_a
+buildable_a$xmin <- 0
+buildable_a$ymin <- 0
+for (i in 1:nrow(buildable_a)){
   if (st_geometry_type(buildable_area_a[i,]) == "GEOMETRYCOLLECTION"){
-    buildable$valid[i] <- FALSE
+    buildable_a$valid[i] <- FALSE
     next
   }
   if (st_is_empty(buildable_area_a[i,])){
-    buildable$valid[i] <- FALSE
+    buildable_a$valid[i] <- FALSE
     next
   }
   print(i)
-  coord <- st_coordinates(buildable[i,])[,1:2]
-  buildable$xmin[i] <- min(coord[,1])
-  buildable$ymin[i] <- min(coord[,2])
-  st_geometry(buildable[i,]) <- st_geometry(buildable[i,]) - c(buildable$xmin[i], buildable$ymin[i])
+  coord <- st_coordinates(buildable_a[i,])[,1:2]
+  buildable_a$xmin[i] <- min(coord[,1])
+  buildable_a$ymin[i] <- min(coord[,2])
+  st_geometry(buildable_a[i,]) <- st_geometry(buildable_a[i,]) - c(buildable_a$xmin[i], buildable_a$ymin[i])
 }
+
 ############################################
 save.image("F2.RData")
 ############################################
 
-
-# Apply minimum 8 x 20 area to get rid of unviable spaces
-# Merge the possible rectangles together
+## Find actual viable space for ADU for each parcel
+## Apply minimum 8 x 20 area to get rid of unviable spaces, and merge the valid rectangles together
 buildable_aadu <- NULL
 flags$ViableSpaceFail <- FALSE
 for (i in 1:nrow(buildable)){
@@ -950,13 +878,14 @@ for (i in 1:nrow(buildable)){
   buildable_aadu <- rbind(buildable_aadu, sf)
 }
 
-buildable_aadu_no_offset <- buildable_aadu
+# Keep a copy of original buildable_aadu as the ones that still need to be shifted by (XMin, YMin)
+buildable_aadu_offset <- buildable_aadu
 # Return geometries to original coordinates, no offsets
-for(i in 1:nrow(buildable_aadu_no_offset)){
+for(i in 1:nrow(buildable_aadu)){
   print(i)
   offset <- c(buildable$xmin[i], buildable$ymin[i])
-  st_geometry(buildable_aadu_no_offset[i,]) <- st_geometry(buildable_aadu_no_offset[i,]) + offset
-  buildable_aadu_no_offset[i,] <- fill_holes(buildable_aadu_no_offset[i,], 1e5)
+  st_geometry(buildable_aadu[i,]) <- st_geometry(buildable_aadu[i,]) + offset
+  buildable_aadu[i,] <- fill_holes(buildable_aadu[i,], 1e5)
 }
 
 ##############################################
@@ -978,38 +907,3 @@ AttachedADU <- buildable_adu_no_offset %>% filter(message == "Success")
 map <- mapview(parcels, alpha.regions = 0, legend = FALSE) + mapview(ExistingBuilding, col.regions = "grey", legend = FALSE) + mapview(AttachedADU, col.regions = "green", legend = TRUE)
 map
 mapshot(map, "attached_adu.html")
-
-
-
-
-# https://github.com/r-spatial/sf/issues/290
-
-buildable_area_a_combined <- buildable_area_a %>% filter(inBox == TRUE)
-buildable_area_a_combined <- st_sf(APN = buildable_area_a_combined$APN %>% unique(), geometry = buildable_area_a_combined %>% split(.$APN) %>% lapply(st_union) %>% do.call(c, .) %>% st_cast())
-bldg0_buildable_combine <- st_sf(APN = bldg0_buildable$APN %>% unique(), geometry = bldg0_buildable %>% split(.$APN) %>% lapply(st_union) %>% do.call(c, .) %>% st_cast())
-
-EPAbbox <- st_bbox(st_combine(bldg_all)) + c(-1000, -1000, 1000, 1000)
-
-# Check which buildable_area_a results need to be fixed. Filter out the ones that show up outside of the EPAbbox
-test <- buildable_area_a
-buildable_area_a$inBox <- FALSE
-for (i in 1:nrow(buildable_area_a)){
-  print(i)
-  bbox <- st_bbox(buildable_area_a[i,])
-  if (is.na(bbox[1])){next}
-  if (bbox[1] >= EPAbbox[1] && bbox[2] >= EPAbbox[2] && bbox[3] <= EPAbbox[3] && bbox[4] <= EPAbbox[4]){
-    buildable_area_a$inBox[i] = TRUE
-  }
-}
-
-mapview(buildable_area_a_combined)
-
-for i in 1:nrow(bldg0_buildable_combine){
-  offset
-}
-
-# The function will plot the total buildable area in green, and the result in a transparent red
-# The result will look like a brown-green
-
-#########EXPLORE HERE#################################
-
