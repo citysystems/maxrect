@@ -70,11 +70,14 @@ parcels <- parcels %>% inner_join(street, by = c("APN" = "apn"))
 ## Format: SF LINE objects
 ## Purpose: Link each parcel to their respective roadway to identify front edge of parcels.
 # Note: Due to variations in name capitalization (e.g. McNair vs. Mcnair) or spelling errors, some manual edits were necessary for joining all parcels
-roads <- read_sf("epa_roads_adj_NAD83.geojson") %>% select(name = FULLNAME) %>% arrange(name) %>% st_set_crs(102643)
+roads <- read_sf("epa_roads_adj_NAD83.geojson") %>% dplyr::select(name = FULLNAME) %>% arrange(name) %>% st_set_crs(102643)
 # Reformat so all lines for one street name (e.g. "Maple Ln") are represented by one MULTILINE object. Distinguish between Ln, St, Ave, etc. with the same name
 # Technical help: Combining sf objects by attribute https://github.com/r-spatial/sf/issues/290
-roads_combined <- st_sf(name = roads$name %>% unique() %>% .[1:161], 
-                        geometry = roads %>% split(.$name) %>% lapply(st_union) %>% do.call(c, .) %>% st_cast())
+roads_combined <- 
+  st_sf(
+    name = roads$name %>% unique() %>% .[1:161],
+    geometry = roads %>% split(.$name) %>% lapply(st_union) %>% do.call(c, .) %>% st_cast()
+  )
 
 ## Object: Parcel points adjacent to streets, hereby coined "block points"
 ## Source: Result of geoprocessing done in QGIS. parcels dissolved by block, and vertices extracted from dissolved polygons.
@@ -174,6 +177,7 @@ colnames(flags) <- c("APN","NoBldg")
 flags$APN <- parcels$APN
 flags$NoBldg <- FALSE
 for (i in 1:nrow(parcels)){
+  print(i)
   index <- match(parcels$APN[i], bldgs$APN)
   # No building available, add an empty polygon
   if (is.na(index)){
@@ -182,7 +186,7 @@ for (i in 1:nrow(parcels)){
   }
   else{
     # Clip the buildings to boundary of each parcel
-    geom <- st_union(bldgs$geometry[index]) %>% st_intersection(parcels$geometry[i]) %>% st_cast("POLYGON")
+    geom <- st_buffer(st_union(bldgs$geometry[index]),0) %>% st_intersection(parcels$geometry[i]) %>% st_cast("POLYGON")
     if (length(geom) == 1){sf <- st_sf(APN = parcels$APN[i], geometry = geom)}
     else{
       # Sort buildings by area
